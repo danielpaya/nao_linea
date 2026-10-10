@@ -1,0 +1,38 @@
+experiment: ppo_brazos
+seed: 0
+total_timesteps: 5000000
+n_envs: 16
+torch_threads: 4
+env:
+  target_speed: 0.2
+  action_scale: 1.0
+  reset_noise: 0.02
+  gait_period: 0.6
+  stance_fraction: 0.6
+  control_arms: true
+  reward_weights: {}
+normalize:
+  obs: true
+  reward: true
+  clip_obs: 10.0
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 1.0
+policy:
+  net_arch:
+  - 256
+  - 256
+  activation: elu
+  log_std_init: -1.0
+checkpoint_every: 1000000
+eval:
+  every: 500000
+  n_episodes: 5

@@ -1,0 +1,10 @@
+fecha: '2026-09-30T12:24:48'
+git_commit: 1bc49f6-modificado
+python: 3.12.10
+sistema: Windows-11-10.0.26200-SP0
+mujoco: 3.14.0
+gymnasium: 1.3.0
+stable_baselines3: 2.9.0
+torch: 2.14.0+cpu
+comando: C:\Users\camil\Documents\GitHub\NAO\src\train.py --config configs/ppo_brazos.yaml
+  --total-timesteps 5000000 --run-name ppo_brazos_5M
