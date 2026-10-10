@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Archivos de entrega y logs que no van al repo
+*.bundle
+*.zip
+MUJOCO_LOG.TXT
+logs/
+videos/
