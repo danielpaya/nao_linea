@@ -62,6 +62,9 @@ class LaneEstimator(object):
                  rel_contrast=0.18,      # contraste minimo relativo al fondo
                  refine=False,           # autocorreccion de pitch/roll (experimental: no mejoro en pruebas)
                  refine_pitch_deg=5.0, refine_roll_deg=4.0,
+                 color_order="bgr",     # "bgr" (kBGRColorSpace) o "rgb" (kRGBColorSpace, el de PenaltyStack)
+                 polaridad="oscura",    # "oscura": linea mas oscura que el piso (cinta negra sobre madera)
+                                        # "clara":  linea mas clara que el piso (cinta blanca sobre piso oscuro)
                  seed=0):
         self.cam = camera
         self.lane_width = lane_width
@@ -87,10 +90,14 @@ class LaneEstimator(object):
         self.red_min_points = red_min_points
         self.local_window = int(local_window) | 1 if local_window else 0
         self.rel_contrast = rel_contrast
+        if polaridad not in ("oscura", "clara"):
+            raise ValueError('polaridad debe ser "oscura" o "clara"')
+        self.polaridad = polaridad
         self.refine = refine
         self.refine_pitch = np.radians(np.arange(-refine_pitch_deg, refine_pitch_deg + 1e-6, 0.5))
         self.refine_roll = np.radians(np.arange(-refine_roll_deg, refine_roll_deg + 1e-6, 1.0))
         self._uv = np.zeros((0, 2))
+        self.ib, self.ir = (0, 2) if color_order == "bgr" else (2, 0)
         self.rng = np.random.RandomState(seed)
         self.rows = np.arange(self.row_start, camera.height, row_step)
         self.last_points = None  # puntos en el suelo de la ultima imagen (para depurar)
@@ -101,8 +108,7 @@ class LaneEstimator(object):
     def _line_points(self, img, T):
         """Centros de los tramos oscuros con ancho compatible con la linea -> puntos (x, y) en el suelo."""
         sub = img[self.rows].astype(np.float32)
-        # imagen BGR (kBGRColorSpace = 13)
-        gray = 0.114 * sub[:, :, 0] + 0.587 * sub[:, :, 1] + 0.299 * sub[:, :, 2]
+        gray = 0.114 * sub[:, :, self.ib] + 0.587 * sub[:, :, 1] + 0.299 * sub[:, :, self.ir]
         if self.local_window > 0:
             # Fondo LOCAL (media movil a lo largo de la fila): resiste reflejos y luz no uniforme
             k = self.local_window
@@ -113,7 +119,10 @@ class LaneEstimator(object):
             bg = np.median(gray, axis=1)[:, None]
         # Contraste minimo relativo al brillo del fondo (funciona con poca y mucha luz)
         thr = np.maximum(self.min_contrast, self.rel_contrast * bg)
-        dark = (gray < bg * self.dark_ratio) & ((bg - gray) > thr)
+        if self.polaridad == "oscura":
+            dark = (gray < bg * self.dark_ratio) & ((bg - gray) > thr)
+        else:  # linea clara: el contraste se mide contra la escala que le queda por encima al fondo
+            dark = (gray > bg + (255.0 - bg) * (1.0 - self.dark_ratio)) & ((gray - bg) > thr)
         nr, w = dark.shape
         padded = np.zeros((nr, w + 2), dtype=np.int8)
         padded[:, 1:-1] = dark
@@ -191,7 +200,7 @@ class LaneEstimator(object):
 
     def _red_points(self, img, T):
         sub = img[self.rows].astype(np.int32)
-        b, g, r = sub[:, :, 0], sub[:, :, 1], sub[:, :, 2]
+        b, g, r = sub[:, :, self.ib], sub[:, :, 1], sub[:, :, self.ir]
         red = ((r > self.red_min) & (r * 10 > g * int(10 * self.red_ratio_g)) & (r * 10 > b * int(10 * self.red_ratio_b))
                & ((r - np.maximum(g, b)) > self.red_min_sat))
         # La franja de meta cruza todo el carril: exigir muchos pixeles rojos en la misma fila
@@ -286,7 +295,7 @@ class LaneEstimator(object):
     # ------------------------------------------------------------------ API
 
     def process(self, img, T):
-        """img: arreglo HxWx3 uint8 en BGR. T: 4x4 camara->robot en el instante de la imagen."""
+        """img: arreglo HxWx3 uint8 (orden de color segun color_order). T: 4x4 camara->robot en el instante de la imagen."""
         est = LaneEstimate()
         pts = self._line_points(img, T)
         est.n_points = int(pts.shape[0])

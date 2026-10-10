@@ -42,7 +42,7 @@ class EstimadorCarrilPuro(object):
                  rel_contrast=0.18, local_window=41, width_tol=(0.35, 2.6), x_range=(0.12, 2.2), max_abs_y=1.6,
                  ransac_iters=60, inlier_tol=0.02, min_inliers=8, max_lines=4, pair_tol=0.08,
                  red_ratio=2.0, red_min=80, red_min_sat=70, red_min_row_px=25, red_min_rows=3,
-                 color_order="rgb", seed=0):
+                 color_order="rgb", polaridad="oscura", seed=0):
         self.w, self.h = int(width), int(height)
         self.fx = (width / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
         self.fy = (height / 2.0) / math.tan(math.radians(vfov_deg) / 2.0)
@@ -51,6 +51,7 @@ class EstimadorCarrilPuro(object):
         self.spacing = lane_width + line_width
         self.rows = list(range(0, self.h, row_step))
         self.dark_ratio, self.min_contrast, self.rel_contrast = dark_ratio, min_contrast, rel_contrast
+        self.clara = polaridad == "clara"   # "oscura" (cinta negra) o "clara" (cinta blanca sobre piso oscuro)
         self.k = int(local_window) | 1
         self.width_tol, self.x_range, self.max_abs_y = width_tol, x_range, max_abs_y
         self.ransac_iters, self.inlier_tol, self.min_inliers = ransac_iters, inlier_tol, min_inliers
@@ -107,7 +108,10 @@ class EstimadorCarrilPuro(object):
                     bg = acc / k
                     gi = gray[i]
                     thr = self.min_contrast if self.min_contrast > self.rel_contrast * bg else self.rel_contrast * bg
-                    dark = gi < bg * self.dark_ratio and (bg - gi) > thr
+                    if self.clara:
+                        dark = gi > bg + (255.0 - bg) * (1.0 - self.dark_ratio) and (gi - bg) > thr
+                    else:
+                        dark = gi < bg * self.dark_ratio and (bg - gi) > thr
                 else:
                     dark = False
                 if dark and run_start < 0:

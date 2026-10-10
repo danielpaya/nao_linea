@@ -13,6 +13,8 @@ Uso:
     uv run python demo/run_demo.py --live --sin-vision     # visor 3D en vivo (solo RL)
     uv run python demo/run_demo.py --live --inicio-d 12 --inicio-psi 8
         # colocado chueco: 12 cm a la izquierda y girado 8 grados; mide, se centra y corre
+    uv run python demo/run_demo.py --live --piso gris_oscuro --linea blanco
+        # otros colores (tambien en demo/pista.yaml o desde el panel)
 En Linux sin pantalla:  MUJOCO_GL=egl (u osmesa) uv run python demo/run_demo.py --video demo.mp4
 """
 import argparse
@@ -31,6 +33,8 @@ from stable_baselines3 import PPO  # noqa: E402  (importar torch antes que el co
 import mujoco  # noqa: E402
 import src.envs.nao_walk_env as E  # noqa: E402
 from carril import CameraModel, LaneEstimator, LaneFilter  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_scene  # noqa: E402  (colores de la pista: demo/pista.yaml)
 
 E.SCENE_PATH = ROOT / "assets" / "nao" / "scene_carril.xml"
 LANE_HALF, LENGTH = 0.35, 5.0
@@ -39,6 +43,7 @@ GYRO_OBS = 5                     # indice de la observacion "giro alrededor de z
 TURN_GAIN = 0.215                # rad/s de giro que produce +1 de sesgo en esa observacion (medido)
 CAM_W, CAM_H = 320, 240
 HFOV, VFOV = 54.7, 42.5          # camara inferior del modelo B-Human
+PISTA = {}                       # colores y polaridad de la pista generada (ver build_scene.describe)
 
 
 def load_policy():
@@ -86,11 +91,64 @@ def foot_out(env):
     return False
 
 
+class Desplegable(object):
+    """Lista desplegable para matplotlib (no trae una): un boton con el valor actual y una flecha.
+    Al hacer clic se abre la lista encima del boton; al elegir una opcion se cierra."""
+
+    def __init__(self, fig, rect, etiqueta, opciones, inicial, al_cambiar=None, max_visibles=10):
+        from matplotlib.widgets import Button
+        self.fig, self.rect, self.al_cambiar = fig, rect, al_cambiar
+        self.opciones = list(opciones)
+        if inicial not in self.opciones:       # p. ej. un "#rrggbb" puesto en pista.yaml
+            self.opciones.insert(0, inicial)
+        self.opciones = self.opciones[:max_visibles + 1]
+        self.valor = inicial
+        fig.text(rect[0] - 0.01, rect[1] + rect[3] / 2, etiqueta, ha="right", va="center", fontsize=10)
+        self.boton = Button(fig.add_axes(rect), self._texto(), color="#f1f3f4", hovercolor="#e0e0e0")
+        self.boton.label.set_fontsize(10)
+        self.boton.on_clicked(lambda _e: self.alternar())
+        self.lista_ax = None
+        self.radio = None
+
+    def _texto(self):
+        return "%s   \u25bc" % self.valor
+
+    def alternar(self):
+        if self.lista_ax is not None:
+            self.cerrar()
+            return
+        from matplotlib.widgets import RadioButtons
+        x, y, w, h = self.rect
+        alto = 0.032 * len(self.opciones)
+        self.lista_ax = self.fig.add_axes([x, y + h + 0.005, w, alto], facecolor="white", zorder=10)
+        for lado in self.lista_ax.spines.values():
+            lado.set_edgecolor("#9aa0a6")
+        self.radio = RadioButtons(self.lista_ax, self.opciones, active=self.opciones.index(self.valor))
+        for t in self.radio.labels:
+            t.set_fontsize(9)
+        self.radio.on_clicked(self.elegir)
+        self.fig.canvas.draw_idle()
+
+    def elegir(self, opcion):
+        self.valor = opcion
+        self.boton.label.set_text(self._texto())
+        self.cerrar()
+        if self.al_cambiar is not None:
+            self.al_cambiar(opcion)
+
+    def cerrar(self):
+        if self.lista_ax is not None:
+            self.radio.disconnect_events()
+            self.lista_ax.remove()
+            self.lista_ax, self.radio = None, None
+            self.fig.canvas.draw_idle()
+
+
 class CameraWindow(object):
     """Ventana aparte (matplotlib) con lo que ve la camara inferior del NAO y lo que detecta la vision.
     Con controls=True agrega un panel: posicion inicial, vision si/no y botones Correr / Detener."""
 
-    def __init__(self, controls=False, d0=0.0, psi0=0.0, vision=True):
+    def __init__(self, controls=False, d0=0.0, psi0=0.0, vision=True, piso="madera_clara", linea="negro"):
         import matplotlib
         import matplotlib.pyplot as plt
         self.plt = plt
@@ -99,9 +157,10 @@ class CameraWindow(object):
         self.request = None      # "run" o "stop" (lo leen la demo y la corrida en curso)
         self.dirty = True        # la posicion inicial cambio: actualizar la vista previa
         self.d0, self.psi0, self.vision = d0, psi0, vision
+        self.piso, self.linea = str(piso), str(linea)
         if controls:
-            self.fig = plt.figure(figsize=(6.8, 7.8))
-            self.ax = self.fig.add_axes([0.02, 0.40, 0.96, 0.53])
+            self.fig = plt.figure(figsize=(6.8, 8.4))
+            self.ax = self.fig.add_axes([0.02, 0.43, 0.96, 0.51])
         else:
             self.fig, self.ax = plt.subplots(figsize=(6.4, 5.6))
         try:
@@ -115,7 +174,7 @@ class CameraWindow(object):
         self.ax.axis("off")
         self.title = self.ax.set_title("", fontsize=12, fontweight="bold")
         if controls:
-            self.info = self.fig.text(0.04, 0.315, "", fontsize=10, family="monospace")
+            self.info = self.fig.text(0.04, 0.355, "", fontsize=10, family="monospace")
             self._build_controls()
         else:
             self.info = self.fig.text(0.03, 0.03, "", fontsize=11, family="monospace")
@@ -124,10 +183,16 @@ class CameraWindow(object):
     def _build_controls(self):
         from matplotlib.widgets import Button, CheckButtons, Slider
         f = self.fig
-        self.s_d = Slider(f.add_axes([0.33, 0.235, 0.52, 0.035]), "Inicio: corrido [cm]\n(+ izquierda)", -25, 25,
+        self.s_d = Slider(f.add_axes([0.33, 0.285, 0.52, 0.032]), "Inicio: corrido [cm]\n(+ izquierda)", -25, 25,
                           valinit=self.d0, valstep=1)
-        self.s_p = Slider(f.add_axes([0.33, 0.175, 0.52, 0.035]), "Inicio: girado [grados]\n(+ izquierda)", -15, 15,
+        self.s_p = Slider(f.add_axes([0.33, 0.230, 0.52, 0.032]), "Inicio: girado [grados]\n(+ izquierda)", -15, 15,
                           valinit=self.psi0, valstep=1)
+        # Colores: nombre (madera_oscura, gris, blanco...) o codigo "#rrggbb"; ver demo/pista.yaml
+        # Colores: listas desplegables con los nombres de build_scene (mas colores HEX en demo/pista.yaml)
+        self.d_piso = Desplegable(f, [0.12, 0.150, 0.27, 0.042], "Piso", list(build_scene.PISOS), self.piso)
+        self.d_linea = Desplegable(f, [0.49, 0.150, 0.21, 0.042], "Linea", list(build_scene.LINEAS), self.linea)
+        self.b_col = Button(f.add_axes([0.73, 0.145, 0.24, 0.052]), "Aplicar colores", color="#e3f2fd", hovercolor="#bbdefb")
+        self.b_col.on_clicked(lambda _e: self._apply_colors())
         self.c_v = CheckButtons(f.add_axes([0.03, 0.03, 0.30, 0.09]), ["Vision de carril"], [self.vision])
         self.b_run = Button(f.add_axes([0.38, 0.035, 0.28, 0.08]), "Correr / Reiniciar", color="#c8e6c9", hovercolor="#a5d6a7")
         self.b_stop = Button(f.add_axes([0.69, 0.035, 0.27, 0.08]), "Detener", color="#ffcdd2", hovercolor="#ef9a9a")
@@ -148,6 +213,12 @@ class CameraWindow(object):
         self.c_v.on_clicked(on_v)
         self.b_run.on_clicked(lambda _e: setattr(self, "request", "run"))
         self.b_stop.on_clicked(lambda _e: setattr(self, "request", "stop"))
+
+    def _apply_colors(self):
+        self.d_piso.cerrar()
+        self.d_linea.cerrar()
+        self.piso, self.linea = self.d_piso.valor, self.d_linea.valor
+        self.request = "colores"
 
     def update(self, img, pts, phase, text):
         self.im.set_data(img)
@@ -178,7 +249,7 @@ def place_robot(env, d0, psi0_deg):
 
 
 def run(vision, seed=1000, video=None, live=False, pose_noise_deg=1.0, k_psi=1.2, k_d=2.0, max_bias=0.35, max_bias_corr=0.35,
-        start_d=0.0, start_psi_deg=0.0, measure_s=1.5, show_cam=False, log=print, ctx=None):
+        start_d=0.0, start_psi_deg=0.0, measure_s=1.5, show_cam=False, log=print, ctx=None, polaridad=None):
     """ctx: si se pasa (modo interactivo), reutiliza env, politica, visor, ventana y renderer ya creados."""
     if ctx is None:
         cfg, model, vn = load_policy()
@@ -192,7 +263,9 @@ def run(vision, seed=1000, video=None, live=False, pose_noise_deg=1.0, k_psi=1.2
     m, d = env.model, env.data
     cam_id = m.camera("CameraBottom").id
     cam = CameraModel(CAM_W, CAM_H, HFOV, VFOV)
-    est = LaneEstimator(cam)
+    if polaridad is None:   # linea mas oscura o mas clara que el piso, segun los colores de la pista
+        polaridad = ctx["polaridad"] if ctx is not None and "polaridad" in ctx else PISTA.get("polaridad", "oscura")
+    est = LaneEstimator(cam, polaridad=polaridad)
     filt = LaneFilter()
     if ctx is not None:
         cam_renderer, cam_win, viewer = ctx["renderer"], ctx["cam_win"], ctx["viewer"]
@@ -418,24 +491,50 @@ def render_video(path, runs, fps=16.7):
     plt.close(fig)
 
 
-def live_app(a):
-    """Modo interactivo: un solo visor 3D + ventana de camara con panel para repetir corridas."""
+def live_app(a, pista_cfg):
+    """Modo interactivo: visor 3D + ventana de camara con panel para repetir corridas y cambiar colores."""
     from mujoco import viewer as mj_viewer
     policy = load_policy()
-    env = E.NaoWalkEnv(**policy[0]["env"])
-    env.reset(seed=a.seed)
-    place_robot(env, a.inicio_d / 100.0, a.inicio_psi)
-    viewer = mj_viewer.launch_passive(env.model, env.data)
-    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-    viewer.cam.trackbodyid = env._torso_id
-    viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 1.8, 150, -25
-    cam_win = CameraWindow(controls=True, d0=a.inicio_d, psi0=a.inicio_psi, vision=not a.sin_vision)
-    renderer = mujoco.Renderer(env.model, CAM_H, CAM_W)
-    ctx = dict(policy=policy, env=env, viewer=viewer, cam_win=cam_win, renderer=renderer)
-    cam_id = env.model.camera("CameraBottom").id
-    print("Usa el panel de la ventana 'Lo que ve el NAO': mueve los deslizadores, marca o desmarca la vision "
-          "y presiona 'Correr / Reiniciar'. Cierra cualquiera de las dos ventanas para salir.")
-    while viewer.is_running() and cam_win.is_open():
+    cam_win = CameraWindow(controls=True, d0=a.inicio_d, psi0=a.inicio_psi, vision=not a.sin_vision,
+                           piso=pista_cfg["piso"], linea=pista_cfg["linea"])
+    ctx = dict(policy=policy, cam_win=cam_win, viewer=None, polaridad=PISTA["polaridad"])
+
+    def open_world():
+        """(Re)crea el entorno, el visor 3D y el renderer de la camara con la pista actual."""
+        if ctx["viewer"] is not None:
+            ctx["viewer"].close()
+            time.sleep(0.3)
+        env = E.NaoWalkEnv(**policy[0]["env"])
+        env.reset(seed=a.seed)
+        place_robot(env, cam_win.d0 / 100.0, cam_win.psi0)
+        viewer = mj_viewer.launch_passive(env.model, env.data)
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        viewer.cam.trackbodyid = env._torso_id
+        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 1.8, 150, -25
+        ctx.update(env=env, viewer=viewer, renderer=mujoco.Renderer(env.model, CAM_H, CAM_W))
+        cam_win.dirty = True
+
+    open_world()
+    print("Usa el panel de la ventana 'Lo que ve el NAO': mueve los deslizadores, marca o desmarca la vision, "
+          "cambia los colores y presiona 'Correr / Reiniciar'. Cierra cualquiera de las dos ventanas para salir.")
+    while ctx["viewer"].is_running() and cam_win.is_open():
+        env, renderer, viewer = ctx["env"], ctx["renderer"], ctx["viewer"]
+        if cam_win.request == "colores":
+            cam_win.request = None
+            try:
+                cfg = dict(pista_cfg, piso=cam_win.piso, linea=cam_win.linea)
+                info = build_scene.build(cfg)
+            except ValueError as exc:
+                cam_win.set_title(str(exc)[:60], "#c5221f")
+                print(exc)
+                continue
+            pista_cfg = cfg
+            PISTA.update(info)
+            ctx["polaridad"] = info["polaridad"]
+            open_world()
+            if info["contraste"] < 45:
+                cam_win.set_title("Ojo: la linea casi no se distingue del piso", "#c5221f")
+            continue
         if cam_win.request == "run":
             cam_win.request = None
             run(vision=cam_win.vision, live=True, ctx=ctx, seed=a.seed, pose_noise_deg=a.pose_noise,
@@ -448,16 +547,16 @@ def live_app(a):
             cam_win.dirty = False
             env.reset(seed=a.seed)
             place_robot(env, cam_win.d0 / 100.0, cam_win.psi0)
-            renderer.update_scene(env.data, camera=cam_id)
+            renderer.update_scene(env.data, camera=env.model.camera("CameraBottom").id)
             cam_win.update(renderer.render(), None, "Listo: ajusta el inicio y presiona Correr",
-                           "posicion inicial: d = %+3.0f cm   psi = %+3.0f deg\nvision: %s"
-                           % (cam_win.d0, cam_win.psi0, "SI" if cam_win.vision else "NO"))
+                           "posicion inicial: d = %+3.0f cm   psi = %+3.0f deg\nvision: %s   piso: %s   linea: %s"
+                           % (cam_win.d0, cam_win.psi0, "SI" if cam_win.vision else "NO", cam_win.piso, cam_win.linea))
         viewer.sync()
         if cam_win.interactive:
             cam_win.plt.pause(0.05)
         else:
             time.sleep(0.05)
-    viewer.close()
+    ctx["viewer"].close()
 
 
 def main():
@@ -472,13 +571,16 @@ def main():
     ap.add_argument("--inicio-psi", type=float, default=0.0,
                     help="colocacion inicial: girado a la izquierda (+) o derecha (-) [grados]")
     ap.add_argument("--sin-camara", action="store_true", help="con --live: no abrir la ventana de la camara")
+    build_scene.add_color_args(ap)   # --piso, --linea, --meta, --sin-veta (si no se pasan: demo/pista.yaml)
     a = ap.parse_args()
+    pista_cfg = build_scene.config_from_args(a)
+    PISTA.update(build_scene.build(pista_cfg))   # regenera la pista con esos colores
     kw = dict(seed=a.seed, pose_noise_deg=a.pose_noise, start_d=a.inicio_d / 100.0, start_psi_deg=a.inicio_psi)
     if a.live:
         if a.sin_camara:
             run(vision=not a.sin_vision, live=True, **kw)
         else:
-            live_app(a)
+            live_app(a, pista_cfg)
         return
     out = a.video
     runs = []

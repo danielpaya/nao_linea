@@ -14,12 +14,12 @@
   <worldbody>
     <light pos="2.5 0 4" dir="0 0 -1" directional="true" diffuse="0.6 0.6 0.6"/>
     <geom name="floor" type="plane" size="0 0 0.05" material="duela" contype="1" conaffinity="14"/>
-    <geom type="box" pos="2.7000 -1.0785 0.0006" size="3.1000 0.0095 0.0006" rgba="0.06 0.06 0.07 1" contype="0" conaffinity="0"/>
-    <geom type="box" pos="2.7000 -0.3595 0.0006" size="3.1000 0.0095 0.0006" rgba="0.06 0.06 0.07 1" contype="0" conaffinity="0"/>
-    <geom type="box" pos="2.7000 0.3595 0.0006" size="3.1000 0.0095 0.0006" rgba="0.06 0.06 0.07 1" contype="0" conaffinity="0"/>
-    <geom type="box" pos="2.7000 1.0785 0.0006" size="3.1000 0.0095 0.0006" rgba="0.06 0.06 0.07 1" contype="0" conaffinity="0"/>
-    <geom name="salida" type="box" pos="0 0 0.0005" size="0.09 1.0785 0.0005" rgba="0.06 0.06 0.07 1" contype="0" conaffinity="0"/>
-    <geom name="meta" type="box" pos="5.150 0 0.0007" size="0.15 0.3500 0.0007" rgba="0.75 0.08 0.08 1" contype="0" conaffinity="0"/>
+    <geom type="box" pos="2.7000 -1.0785 0.0006" size="3.1000 0.0095 0.0006" rgba="0.059 0.059 0.071 1" contype="0" conaffinity="0"/>
+    <geom type="box" pos="2.7000 -0.3595 0.0006" size="3.1000 0.0095 0.0006" rgba="0.059 0.059 0.071 1" contype="0" conaffinity="0"/>
+    <geom type="box" pos="2.7000 0.3595 0.0006" size="3.1000 0.0095 0.0006" rgba="0.059 0.059 0.071 1" contype="0" conaffinity="0"/>
+    <geom type="box" pos="2.7000 1.0785 0.0006" size="3.1000 0.0095 0.0006" rgba="0.059 0.059 0.071 1" contype="0" conaffinity="0"/>
+    <geom name="salida" type="box" pos="0 0 0.0005" size="0.09 1.0785 0.0005" rgba="0.059 0.059 0.071 1" contype="0" conaffinity="0"/>
+    <geom name="meta" type="box" pos="5.150 0 0.0007" size="0.15 0.3500 0.0007" rgba="0.784 0.098 0.098 1" contype="0" conaffinity="0"/>
     <camera name="lateral" pos="2.6 -3.4 1.6" xyaxes="1 0 0 0 0.45 0.89"/>
   </worldbody>
 </mujoco>

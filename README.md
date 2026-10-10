@@ -154,9 +154,42 @@ cerrar nada:
 | ☑️ **Visión de carril** | Con visión se corrige; sin visión camina a ciegas |
 | ▶️ **Correr / Reiniciar** | Lanza la corrida (o la reinicia) |
 | ⏹️ **Detener** | Para la corrida |
+| 🎨 **Piso ▼ / Línea ▼ + Aplicar colores** | Listas desplegables para cambiar los colores de la pista |
 
 **Para mostrarlo:** pon corrido 15 y girado −10, desmarca la visión y presiona Correr: se sale. Marca la
 visión y vuelve a correr: mide dónde quedó, se centra y llega.
+
+### 🎨 Cambiar los colores de la pista
+
+Hay tres formas, de la más rápida a la más permanente:
+
+1. **En el panel:** elige el color en las listas desplegables **Piso ▼** y **Línea ▼** y presiona
+   **Aplicar colores**.
+2. **En la terminal:**
+   ```bash
+   uv run python demo/run_demo.py --live --piso gris_oscuro --linea blanco
+   uv run python demo/run_demo.py --live --piso "#3a2a1a" --linea "#f5f5f5" --sin-veta
+   ```
+3. **En el archivo [`demo/pista.yaml`](demo/pista.yaml)**, que es lo que se usa por defecto:
+   ```yaml
+   piso: madera_clara     # color base del piso
+   veta: true             # tablas y veta de madera; false = piso liso
+   linea: negro           # color de las líneas del carril
+   meta: rojo             # color de la franja de meta
+   ```
+
+**Colores con nombre:**
+- **Pisos:** `madera_clara`, `madera_oscura`, `duela_roja`, `gris`, `gris_oscuro`, `blanco`, `negro`, `verde`, `azul`.
+- **Líneas:** `negro`, `blanco`, `amarillo`, `rojo`, `azul`, `verde`, `gris`.
+
+También acepta cualquier código `#rrggbb`. La pista se regenera sola al correr la demo.
+
+![La visión con distintos colores de piso y línea](img/pista_colores.png)
+
+La visión decide sola si busca líneas **más oscuras** o **más claras** que el piso. En las combinaciones
+de la imagen, el robot está 8 cm corrido y la visión lo estima con unos 0.1 cm de error. Si la línea y
+el piso se parecen demasiado (abajo a la derecha, gris sobre gris), no encuentra las líneas: la demo
+avisa, porque en una pista real tampoco se verían.
 
 <details>
 <summary><b>Otros comandos</b></summary>
@@ -178,11 +211,64 @@ uv run python demo/build_scene.py                                               
 | Ruta | Qué es |
 |:--|:--|
 | `carril/` | Visión de carril: modelo de cámara, estimador (numpy y Python puro), filtro visión + odometría y controlador |
-| `demo/build_scene.py` | Pista de 5 m × 70 cm en MuJoCo (duela, líneas, meta roja) y NAO V6 con su cámara inferior |
+| `demo/build_scene.py` | Pista de 5 m × 70 cm en MuJoCo (piso, líneas, meta) y NAO V6 con su cámara inferior |
+| `demo/pista.yaml` | Colores de la pista: piso, veta, línea y meta |
 | `demo/run_demo.py` | Demo interactiva con panel y video comparativo |
+| `demo/caminatas/` | Caminatas tipo NAOqi y tipo B-Human, cinemática inversa, simulador del carril, benchmark y video de la carrera |
+| `robot/` | Kit para el NAO real: diagnóstico, medición de la visión, grabación de fotos y caminata ([`robot/LUNES.md`](robot/LUNES.md)) |
 | `src/`, `checkpoints/`, `assets/` | Caminata por RL (PPO) y modelo del NAO V6, del proyecto [CamiloGomezB/NAO](https://github.com/CamiloGomezB/NAO) |
 | `media/`, `img/`, `resultados/` | GIFs, video, figuras y resultados de esta página |
 | [`DEMO.md`](DEMO.md) | Guía detallada de la demo |
+
+</details>
+
+---
+
+## 🏁 Las 3 caminatas: ¿cuál es más rápida?
+
+En el mismo carril del simulador se comparan **la caminata por RL del equipo** con dos caminatas clásicas
+reimplementadas aquí: una **tipo NAOqi** (la que trae el robot de fábrica) y una **tipo B-Human** (la del
+equipo campeón de RoboCup, base de PenaltyStack).
+
+<div align="center">
+<img src="media/carrera_3_caminatas.gif" alt="Carrera de las 3 caminatas, cada una en su carril" width="80%">
+<br><sub>Cada robot va en su carril, con visión. Video completo: <a href="media/carrera_3_caminatas.mp4"><code>media/carrera_3_caminatas.mp4</code></a> (acelerado ×3).</sub>
+</div>
+
+| Caminata | Cómo funciona | Velocidad | Llega con visión | Llega sin visión | Tiempo en 5 m (con visión) |
+|:--|:--|:--:|:--:|:--:|:--:|
+| 🟢 **tipo B-Human** | Pasos cortos y rápidos (250 ms), giroscopio y FSR | **0.30 m/s** | **25 / 25** | 15 / 25 | **16.2 – 18.3 s** |
+| 🔵 **RL (equipo)** | Política PPO entrenada a 0.2 m/s | 0.20 m/s | **25 / 25** | 15 / 25 | 24.2 – 24.3 s |
+| 🟠 **tipo NAOqi** | Pasos planeados + control del ZMP (pasos de 500 ms) | 0.10 m/s | **25 / 25** | 14 / 25 | 45.3 – 49.9 s |
+
+- **150 corridas:** 3 caminatas × con/sin visión × 5 fricciones (μ = 0.4, 0.6, 0.8, 1.0, 1.2) × 5 salidas
+  con error de colocación aleatorio (el mismo para las tres).
+- **Ninguna se cayó.** Sin visión, las tres se salen del carril en ~40 % de las corridas. **Con visión,
+  todas llegan siempre**, con cualquier fricción.
+- **Fricción:** el RL se entrenó con **μ = 1.0 sin variarla**. Aun así, aguantó todo el rango; lo que cambia
+  con la fricción es hacia dónde se desvía, no si se cae.
+- Aquí la visión es **simulada con el error medido** (σ = 1.6 cm y 1.2°, a 10 Hz) para que el benchmark
+  sea rápido. La cámara completa ya se probó en lazo cerrado arriba.
+- Tabla completa por fricción: [`resultados/benchmark/benchmark.md`](resultados/benchmark/benchmark.md).
+
+![Trayectorias con y sin visión](resultados/benchmark/trayectorias.png)
+
+> ⚠️ **Ojo:** las caminatas clásicas son **reimplementaciones propias** del esquema de cada una, no el código
+> original, y en el simulador los motores son ideales. Lo que sí coincide con el robot real es el orden:
+> B-Human anda ~0.3 m/s y NAOqi ~0.1 m/s en un NAO de verdad.
+
+<details>
+<summary><b>Cómo correrlo</b></summary>
+
+```powershell
+uv run python -m demo.caminatas.carrera_vivo                            # los 3 NAOs a la vez en el visor
+uv run python -m demo.caminatas.carrera_vivo --sin-vision --mu 0.6      # sin vision, piso resbaloso
+uv run python -m demo.caminatas.simular --caminata bhuman --vivo        # ver una sola caminata
+uv run python -m demo.caminatas.simular --caminata naoqi --mu 0.6       # con otra friccion
+uv run python -m demo.caminatas.benchmark --rapido                      # benchmark corto (~1 min)
+uv run python -m demo.caminatas.benchmark                               # completo (~6 min)
+uv run python -m demo.caminatas.video_carrera --gif media/carrera.gif   # video de la carrera
+```
 
 </details>
 

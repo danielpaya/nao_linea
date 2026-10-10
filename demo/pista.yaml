@@ -1,0 +1,16 @@
+# Colores de la pista de la demo. Cambia estos valores y vuelve a correr la demo:
+#     uv run python demo/run_demo.py --live
+# (la pista se regenera sola). Tambien se pueden cambiar desde el panel o en la terminal:
+#     uv run python demo/run_demo.py --live --piso gris --linea blanco
+#
+# Cada color puede ser un NOMBRE de la lista o un codigo HEX como "#c49460".
+#   Pisos:  madera_clara, madera_oscura, duela_roja, gris, gris_oscuro, blanco, negro, verde, azul
+#   Lineas: negro, blanco, amarillo, rojo, azul, verde, gris
+#
+# La vision detecta lineas mas oscuras O mas claras que el piso (lo decide sola segun estos colores).
+# Si la linea y el piso se parecen mucho, la demo avisa: en la vida real tampoco se veria bien.
+
+piso: madera_clara     # color base del piso
+veta: true             # true = tablas y veta de madera; false = piso liso de un solo color
+linea: negro           # color de las lineas del carril (1.9 cm)
+meta: rojo             # color de la franja de meta
