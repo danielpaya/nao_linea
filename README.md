@@ -11,6 +11,7 @@
 ![PPO](https://img.shields.io/badge/caminata-RL%20·%20PPO-8250df)
 ![NAO](https://img.shields.io/badge/robot-NAO%20V6-34a853)
 ![visión](https://img.shields.io/badge/visión-cámara%20inferior%20·%2010%20FPS-9334e6)
+![RL GPU](https://img.shields.io/badge/RL%20propio-MJX%20·%20RTX%205060-76b900)
 ![estado](https://img.shields.io/badge/estado-validado%20en%20simulación-fbbc04)
 
 </div>
@@ -215,6 +216,8 @@ uv run python demo/build_scene.py                                               
 | `demo/pista.yaml` | Colores de la pista: piso, veta, línea y meta |
 | `demo/run_demo.py` | Demo interactiva con panel y video comparativo |
 | `demo/caminatas/` | Caminatas tipo NAOqi y tipo B-Human, cinemática inversa, simulador del carril, benchmark y video de la carrera |
+| `rl/` | **RL propio en GPU** (MJX + Brax): entorno del NAO, entrenamiento, evaluación de robustez, cola nocturna; `rl/politicas/` con las políticas elegidas |
+| [`bitacora.txt`](bitacora.txt) | Registro de decisiones, errores y resultados (base para el paper) |
 | `robot/` | Kit para el NAO real: diagnóstico, medición de la visión, grabación de fotos y caminata ([`robot/LUNES.md`](robot/LUNES.md)) |
 | `src/`, `checkpoints/`, `assets/` | Caminata por RL (PPO) y modelo del NAO V6, del proyecto [CamiloGomezB/NAO](https://github.com/CamiloGomezB/NAO) |
 | `media/`, `img/`, `resultados/` | GIFs, video, figuras y resultados de esta página |
@@ -274,6 +277,52 @@ uv run python -m demo.caminatas.video_carrera --gif media/carrera.gif   # video 
 
 ---
 
+## 🧠 RL propio en GPU: un NAO que camina a 0.3 m/s
+
+Además de usar la caminata RL del equipo, entrenamos **nuestra propia política desde cero** en una GPU de
+casa (RTX 5060, 8 GB) con **MuJoCo MJX + Brax PPO** dentro de WSL2: miles de NAOs simulados a la vez.
+
+| | |
+|:--|:--|
+| **Robot** | NAO V6 (modelo de B-Human / PenaltyStack): 13 motores (piernas + hombros), acción cada **24 ms** |
+| **Qué ve** | Solo sensores del NAO real: giroscopio, inclinación, ángulos y velocidades de motores, **error de rumbo** (en la carrera lo da la visión) |
+| **Velocidad** | ~15 600 pasos de entrenamiento/s · una generación de 60 M de pasos ≈ **56 min** |
+| **Truco clave** | Escena de entrenamiento con choques solo pies–piso: **36× más rápida** con la misma física |
+
+### Generaciones (cada una cambia una sola cosa)
+
+| Gen | Cambio | Tiempo en 5 m | Desvío lateral | Metas en condiciones **no vistas** |
+|:--|:--|:--:|:--:|:--:|
+| v01 | Base, mundo ideal | 19.1 s | 233 cm | 23/80 (29 %) |
+| **v01b** | + la política ve el **error de rumbo** | **16.4 s** | **12 cm** | 66/80 (83 %) |
+| v01c | + castigo a la postura de cadera | 17.2 s | 60 cm | **71/80 (89 %)** |
+| v02 | + fricción, masas y kp al azar | *evaluando* | | |
+| v03 | + motor débil y retraso | *entrenando* | | |
+
+- **Condiciones no vistas** (8 carreras de 5 m cada una, sin visión): fricción 0.2/0.5/1.5, motores 30 % más blandos,
+  un motor al 70/40 %, retraso de 24/72 ms, empujones de 0.25/0.45 m/s. Medido con [`rl/evaluar.py`](rl/evaluar.py).
+- **v01b ya iguala a la caminata tipo B-Human** (16.2 s) y es un tercio más rápida que la RL anterior del equipo (24.3 s).
+- Pendiente: ninguna aguanta **72 ms de retraso** (lo ataca v03) y la v02 parece dar **pasos muy cortos sin levantar bien
+  los pies** (por revisar en video; el premio de fase de pies está calibrado para otro robot).
+- Todo el proceso, incluidos los errores, está en [`bitacora.txt`](bitacora.txt).
+
+<details>
+<summary><b>Cómo se entrena (resumen)</b></summary>
+
+```bash
+# en WSL2, con MuJoCo Playground instalado (ver bitacora.txt, entradas 2-4)
+PY=~/nao_rl/mujoco_playground/.venv/bin/python
+$PY entrenar.py nao_v01b --pasos 60000000          # una generacion (~1 h)
+$PY evaluar.py runs/nao_v01b_s0_XXXX                # 11 condiciones x 8 carreras
+bash cola_noche.sh noches/noche_01.txt              # cola nocturna (~8 h) + resumen automatico
+```
+
+Políticas elegidas (cargables con `ver_politica.py` / `evaluar.py`): [`rl/politicas/`](rl/politicas).
+
+</details>
+
+---
+
 ## ⚖️ Limitaciones
 
 - **Todo está medido en simulación.** La duela, la luz y la cinta reales serán distintas. El siguiente
@@ -281,6 +330,8 @@ uv run python -m demo.caminatas.video_carrera --gif media/carrera.gif   # video 
 - **La demo corrige el rumbo con un truco.** Le suma una señal falsa al giroscopio de la política, y eso
   solo funciona con señales pequeñas; con señales grandes la política gira al revés. Lo correcto es
   **reentrenar la política para que reciba `d` y `psi`** como entradas.
+- **El RL propio todavía no usa la cámara real** en su entrenamiento: ve un error de rumbo integrado del giroscopio.
+  La visión simulada (ruido, 10 Hz, retraso) es la siguiente generación, y luego la prueba con la cámara del simulador.
 - **Con un robot vecino tapando una línea, el error sube.** El filtro y el ancho conocido del carril lo
   amortiguan, pero hay que probarlo.
 

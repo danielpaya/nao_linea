@@ -9,3 +9,9 @@ __pycache__/
 MUJOCO_LOG.TXT
 logs/
 videos/
+
+# RL en GPU (rl/): de cada corrida solo se suben config.json, progreso.csv, evaluacion.csv y resumenes.
+# Las politicas elegidas se copian a rl/politicas/ (esas si se suben).
+rl/runs/**/checkpoints/
+rl/runs/**/*.pkl
+rl/runs/**/*.mp4

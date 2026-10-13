@@ -1,0 +1,206 @@
+BITACORA DEL PROYECTO NAO - CARRERA INDIVIDUAL (Copa NAO CCM MX 2026, 3 de noviembre)
+======================================================================================
+Registro de decisiones, errores, cosas que no funcionaron y resultados, para el paper.
+Reglas:
+  - Una entrada nueva por cada paso terminado, fallido o bloqueado. Las entradas viejas NO se editan: si algo
+    estaba mal, se corrige con una entrada nueva que lo diga.
+  - Todo numero va con su archivo de origen (ruta).
+  - Los fallos tambien se registran: son parte del resultado.
+
+Plantilla:
+=== [N] AAAA-MM-DD HH:MM · Titulo ===
+Objetivo:
+Que se hizo:
+Resultado (numeros + rutas):
+Problemas y solucion:
+Decision y porque:
+Siguiente paso:
+
+
+=== [1] antes del 2026-10-12 · Antecedentes: vision de carril y benchmark de caminatas ===
+Objetivo: medir la posicion del NAO en el carril con su camara (d = desvio lateral, psi = error de rumbo) y
+  comparar caminatas en el simulador antes de entrenar una propia.
+Que se hizo: estimador de lineas (numpy y Python puro, compatible con Python 2.7), filtro vision + odometria,
+  controlador; demo en MuJoCo con la politica RL del equipo; kit para el NAO real (robot/); caminatas tipo
+  NAOqi (ZMP preview) y tipo B-Human (Walk2014) reimplementadas; benchmark de 150 corridas.
+Resultado: RL del equipo sin vision llego a la meta 3/18 vs 18/18 con vision (resultados/lazo_cerrado.md).
+  Benchmark (resultados/benchmark/benchmark.md): con vision las 3 caminatas 25/25 metas; tiempos en 5 m:
+  tipo B-Human 16.2-18.3 s, RL del equipo 24.2-24.3 s, tipo NAOqi 45.3-49.9 s. Sin vision ~40 % se salen.
+Problemas y solucion: la direccion de la politica RL del equipo se hizo sumando un sesgo al giroscopio; solo
+  funciona con sesgos pequenos (con 0.5 gira al reves). El RL con vision queda ~5 cm corrido del centro.
+Decision y porque: entrenar una politica propia que reciba el rumbo como entrada, en vez del truco del sesgo.
+Siguiente paso: montar entrenamiento en GPU.
+
+=== [2] 2026-10-12 13:20 · Montaje del entorno de GPU (WSL2) ===
+Objetivo: entrenar en la RTX 5060 (8 GB) en lugar de la CPU.
+Que se hizo: driver NVIDIA 617.14 (CUDA 13.4) ya instalado; WSL2 + Ubuntu 24.04; uv, git, compiladores;
+  MuJoCo Playground (Google DeepMind) desde el codigo fuente; JAX con CUDA.
+Problemas y solucion:
+  - El primer "wsl --install -d Ubuntu-24.04" solo activo la funcion de Windows (pidio reiniciar); hubo que
+    correrlo otra vez para instalar Ubuntu.
+  - La terminal no mostraba el perfil de Ubuntu (se instalo con la ventana abierta): se abre con
+    "wsl -d Ubuntu-24.04" desde PowerShell.
+Decision y porque: JAX solo tiene soporte de GPU en Linux; WSL2 permite Linux sin dejar Windows.
+
+=== [3] 2026-10-12 13:50 · ERROR: conflicto entre los conectores de JAX para CUDA 12 y CUDA 13 ===
+Que paso: el uv sync de Playground instalo jax-cuda12; despues se agrego jax[cuda13] a mano. Con "uv run" se
+  veia "ALREADY_EXISTS: PJRT_Api already exists" (funcionaba de casualidad con el de CUDA 12). Al llamar el
+  Python directo: "plugin is built with a later version than the framework" -> Aborted (core dumped).
+Solucion: desinstalar jax-cuda13-plugin y jax-cuda13-pjrt.
+Leccion: no mezclar instalaciones a mano con un proyecto que fija versiones en un lock. (Error del asistente
+  al proponer CUDA 13 encima de un lock con CUDA 12.)
+
+=== [4] 2026-10-12 15:35 · ERROR: "uv sync" borro las librerias de NVIDIA ===
+Que paso: tras quitar CUDA 13 se corrio "uv sync" para dejar el entorno como el lock. El lock de Playground NO
+  incluye las librerias de NVIDIA (su README pide instalar jax[cuda12] aparte) -> "cuDNN not found" y JAX cayo
+  a CPU sin avisar mas que con un warning.
+Solucion: "uv pip install jax[cuda12]". Luego se detecto que el -U habia instalado JAX 0.11.2, mas nuevo que el
+  Brax del lock (en una prueba aparte rompia el entrenamiento: jax.device_put_replicated ya no existe) -> se
+  fijo JAX 0.6.2 (la version del uv.lock) con jax[cuda12]==0.6.2.
+Reglas de entorno desde aqui: no volver a correr uv sync; correr con ~/nao_rl/mujoco_playground/.venv/bin/python;
+  export XLA_PYTHON_CLIENT_MEM_FRACTION=0.7.
+
+=== [5] 2026-10-12 15:20 · Problema: pegar un script largo en la terminal lo trunco ===
+Que paso: un heredoc (cat > archivo <<'EOF') pegado en la terminal quedo cortado y mezclado.
+Solucion: los scripts viven en el repo (C:\demo_carril\rl\) y se copian a Linux con cp /mnt/c/demo_carril/rl/...
+
+=== [6] 2026-10-12 14:30 · Referencia: velocidad de la GPU con un humanoide de Playground (Unitree G1) ===
+Objetivo: medir la velocidad de entrenamiento antes de escribir el entorno del NAO y tener una plantilla probada.
+Resultado: G1JoystickFlatTerrain, 8192 robots: 96 M de pasos en 88 min (~18 000 pasos/s); recompensa de -5.7 a
+  +11 (aprendio a caminar). Se leyo su entorno (joystick.py, randomize.py) como plantilla.
+Observacion: en randomize.py dos comentarios no coinciden con el codigo (friccion de articulaciones 0.9-1.1 en el
+  comentario vs 0.5-2.0 en el codigo; frecuencia de paso 1.0-1.5 vs 1.25-1.5). Leccion: se reporta lo que hace
+  el codigo, no lo que dice el comentario.
+
+=== [7] 2026-10-12 15:45 · El NAO V6 en MJX: compatibilidad y escena de entrenamiento (36x mas rapida) ===
+Objetivo: comprobar que el modelo del NAO (el mismo de B-Human / PenaltyStack) funciona en MJX y medir velocidad.
+Resultado (rl/revisar_nao_mjx.py):
+  - Misma fisica: altura del torso tras 1 s de pie = 0.3158 m en MuJoCo (CPU) y en MJX (GPU).
+  - Escena original, 17 geoms de choque: 9 908 pasos de fisica/s con 4096 robots (y errores de memoria).
+  - Escena de entrenamiento (rl/escena_mjx.py): solo pies-piso + solver de 4/8 iteraciones (antes 100/50):
+    360 952 pasos de fisica/s -> 36x. Masa e inercias identicas; de pie, igual altura.
+Decision y porque: para caminar solo importa el contacto pies-piso; si otra parte toca el piso, el robot ya cayo
+  y el episodio termina por inclinacion. La validacion final se hace en la escena completa (sim-to-sim).
+Problema menor: JAX intenta reservar ~6 GB al arrancar y falla (Windows usa ~1.5 GB de la GPU); reintenta con
+  menos y funciona. Se evita el aviso con XLA_PYTHON_CLIENT_MEM_FRACTION=0.7.
+
+=== [8] 2026-10-12 16:25 · Diseno del entorno nao_carrera.py y del entrenamiento ===
+Decisiones (y porque):
+  - Accion: 13 motores (11 de piernas, con HipYawPitch como un solo motor, + 2 ShoulderPitch), objetivo =
+    postura base + accion x 0.3 rad, cada 24 ms (2 ciclos de 12 ms del NAO). Brazos por equilibrio.
+  - Actor: solo sensores del NAO real (giroscopio, inclinacion, angulos y velocidades de motores, accion anterior,
+    comando, reloj de marcha) con ruido; 49 valores x 3 pasos de historia (compensa no ver la velocidad, como el
+    OP3 de Playground). Sin velocidad lineal ni posicion (contrato de PenaltyStack).
+  - Critico: estado privilegiado (velocidad real, alturas, friccion, empujon, retraso): solo existe al entrenar.
+  - Recompensa: 14 terminos (seguir velocidad y giro, tiempo en el aire, fase de pies, estabilidad, pies juntos
+    < 8 cm, suavidad, energia, limites, caida -100). La recompensa puede usar la velocidad real del simulador.
+  - Caida: inclinacion > 45 grados o torso < 20 cm (mas estricto que el G1, 90 grados).
+  - Robustez por generacion: friccion 0.3-1.2, masas +-10 %, kp x0.8-1.2, motor debil 50-100 %, retraso 0-2
+    ciclos, empujones 0.05-0.3 m/s.
+  - Detalle: MuJoCo usa la MAYOR friccion de las dos superficies en contacto; por eso se aleatoriza piso Y pies
+    (si no, la friccion nunca bajaria de 1.0).
+  - Decisiones del usuario: velocidad maxima 0.3 m/s desde v01; FSR fuera (generacion aparte, son ruidosos);
+    brazos incluidos.
+  - PPO: 4096 robots, politica 128x128x128 (debe correr en el NAO), critico 256x3.
+Prueba: corrida minima (32 robots) de v01 y v04 sin errores. Esa corrida casi no usa la GPU: es solo prueba de humo.
+
+=== [9] 2026-10-12 18:35 · nao_v01: base, mundo nominal (100 M de pasos) ===
+Hipotesis: camina a 0.3 m/s en el mundo nominal, pero fragil a cambios.
+Resultado: runs/nao_v01_20261012_171052 (progreso.csv). 84 min; ~15 600 pasos/s. Duracion de episodio 1000 desde
+  11 M (no se cae); recompensa 35.9 (11 M) -> 68.5 (33 M) -> 56.0 (45 M, bajon temporal) -> ~71 desde 56 M
+  (estancada). seguir_vel = 914 de 1500 a los 11 M (camina; parado seria ~40).
+  ver_politica (5 carreras, 0.3 m/s, sin vision): 5/5 metas, 0 caidas, 0.269 m/s (~18.5 s en 5 m), desvio lateral
+  maximo 182-274 cm, rumbo maximo 37-46 grados. Video: C:\demo_carril\nao_v01.mp4.
+Problemas observados (video): gira ~40 grados en los primeros segundos y las piernas se tuercen
+  (HipYawPitch/HipRoll).
+Causa: la recompensa solo premia la velocidad de giro, no el rumbo; un giro corto al arrancar cuesta poco en un
+  episodio de 24 s, y la politica no tiene como saber cuanto ha girado en total. No habia castigo de postura de
+  cadera (el G1 si lo tiene): uso la cadera para girar.
+Error del asistente: se sospecho reward hacking (quedarse parado) por la calibracion de fase_pies; la metrica
+  seguir_vel lo descarto.
+Decision: corregir en dos generaciones de una sola variable: v01b (rumbo) y v01c (cadera).
+Pendiente: el premio fase_pies esta calibrado para el G1 (pies a 15 cm), no para el NAO (3 cm): regala puntos
+  aunque no levante bien los pies. No impidio caminar; corregir en una generacion propia.
+
+=== [10] 2026-10-12 20:10 · nao_v01b: error de rumbo como observacion + premio (60 M) ===
+Hipotesis: si la politica ve el error de rumbo (deseado - estimado integrando el giroscopio con deriva, como el
+  AngleZ del NAO) y se premia mantenerlo, arranca y camina derecho. En la carrera, ese error lo dara la vision.
+Resultado: runs/nao_v01b_20261012_191117. 56 min. Recompensa 23 (6.7 M) -> ~94 (54-60 M), con un bajon a 77 a los
+  40 M. Evaluacion con ver_politica: PENDIENTE.
+Leccion: no se comparan generaciones por su recompensa si la recompensa cambio (v01b tiene un termino mas);
+  se comparan con las mismas carreras de ver_politica / evaluar.
+En curso: nao_v01c (+ castigo a la postura de cadera), runs/nao_v01c_20261012_200725.
+
+=== [11] 2026-10-12 21:00 · Plan de trabajo dia/noche y herramientas ===
+Decision y porque:
+  - Dia: una generacion nueva a la vez, 50-60 M de pasos (~1 h): la v01 se estanco cerca de 55 M y la v01b ya
+    estaba en 88 a los 27 M, asi que alcanza para saber si una idea sirve.
+  - Noche (~8 h, ~420 M de pasos): consolidar. Semillas extra de la mejor configuracion (en RL una sola corrida
+    puede ser suerte; el paper necesita media +- desviacion) y generaciones de robustez largas (120-200 M).
+  - Cada manana se decide con carreras en condiciones vistas y NO vistas (friccion 0.2/1.5, kp 70 %, motor 40 %,
+    retraso 3, empujon 0.45 m/s), no con la recompensa.
+Herramientas nuevas: entrenar.py guarda checkpoint en cada evaluacion y estado.txt; cola_noche.sh (sigue aunque una
+  corrida falle); evaluar.py (todas las carreras de una condicion a la vez en la GPU); resumen_manana.py.
+Riesgos: suspension de Windows (desactivar), cerrar la ventana (usar tmux), dos entrenamientos a la vez (8 GB no
+  alcanzan).
+Siguiente paso: medir v01b y v01c y decidir la noche 1 (por decision del usuario, no se lanza noche hasta medir).
+
+=== [12] 2026-10-12 21:50 · Evaluacion comparativa v01 / v01b / v01c (11 condiciones x 8 carreras) ===
+Objetivo: medir la brecha de generalizacion y si los arreglos de v01b (rumbo) y v01c (cadera) funcionaron.
+Que se hizo: evaluar.py sobre runs/nao_v01_20261012_171052, runs/nao_v01b_20261012_191117 y
+  runs/nao_v01c_20261012_200725 (resultados en <run>/evaluacion.csv). Carreras de 5 m, 0.3 m/s, sin vision.
+  Para estas tres generaciones todas las condiciones salvo la nominal son NO vistas.
+Resultado:
+                                   v01        v01b       v01c
+  nominal: tiempo en 5 m           19.1 s     16.4 s     17.2 s
+  nominal: desvio lateral max      233 cm     12 cm      60 cm
+  nominal: rumbo max               45.7 deg   3.6 deg    14.7 deg
+  nominal: se saldria sin vision   8/8        0/8        8/8
+  metas en condiciones no vistas   23/80      66/80      71/80   (29 % / 83 % / 89 %)
+  caidas en condiciones no vistas  37         14         9
+  retraso 3 ciclos                 8 caidas   8 caidas   8 caidas
+  empujon 0.45 m/s                 8 caidas   6 caidas   1 caida
+  v01 en detalle: friccion 0.5 y 0.2 -> 0/8 metas sin caidas pero giros de ~180 grados (resbala y da vueltas);
+  kp 70 % -> 8/8 caidas; retraso 1 -> 2/8 metas.
+Interpretacion:
+  - v01 confirma su hipotesis: bien en el nominal, fragil fuera de el (brecha 100 % -> 29 %).
+  - v01b: el error de rumbo arreglo el giro inicial (desvio 233 -> 12 cm) y, sin entrenar robustez, subio las
+    metas en condiciones no vistas de 29 % a 83 %. Hipotesis: con una referencia de rumbo se recupera de
+    resbalones en lugar de quedar girando. Ademas es mas rapida (16.4 s).
+  - v01c: mas robusta a empujones fuertes (1 caida vs 6) pero camina menos derecha (60 cm, 14.7 deg).
+    Hipotesis: castigar HipYawPitch/HipRoll le quito la articulacion con la que corregia el rumbo.
+    Falta ver el video para confirmar que las piernas quedaron rectas.
+  - Ninguna aguanta 72 ms de retraso: es el riesgo mas grande para el robot real (lo ataca v03).
+Problemas y solucion: una sola semilla por generacion -> las diferencias v01b vs v01c pueden ser suerte.
+  La evaluacion tarda ~13 min por politica (11 x 8 carreras de hasta 40 s); aceptable de noche.
+Decision y porque (aprobada por el usuario): noche 1 = v01b s1 (60 M), v01c s1 (60 M) para medir varianza;
+  v02 s0 (120 M) y v03 s0 (120 M) para robustez. v02/v03 parten de la configuracion de v01c (rumbo + cadera); si
+  las semillas confirman que la cadera empeora el rumbo, se corre una variante sin ese castigo.
+  Lista: rl/noches/noche_01.txt.
+Siguiente paso: lanzar la noche 1 con cola_noche.sh; en la manana, resumen_manana.py y videos.
+
+=== [13] 2026-10-12 23:25 · Prueba de v02 (50 M), sincronizacion con Windows y noche 1 lanzada ===
+Objetivo: comprobar en una hora que la aleatorizacion del mundo funciona a escala antes de gastar la noche en v02/v03.
+Que se hizo: nao_v02 semilla 9, 50 M de pasos (runs/nao_v02_s9_20261012_221121, 49 min).
+Resultado (progreso.csv): duracion 1000 desde ~17 M (igual de rapido que sin aleatorizar); recompensa maxima 93.3 a los
+  44.6 M y 80.1 en la ultima evaluacion (50 M). Desglose a los 44 M: seguir_vel 1437/1500, seguir_rumbo 991/1000,
+  seguir_giro 652, 0 caidas. A los 50 M: resbala el doble (-43 vs -20), mas bamboleo (-55 vs -16) y mas cadera
+  (-62 vs -19). -> el checkpoint de 44 M es mejor que el final (copiado a rl/politicas/nao_v02_s9_44M/).
+  Evaluacion en 11 condiciones: PENDIENTE (GPU ocupada por la noche).
+Observacion a revisar: tiempo_aire ~ 0 (2.7) -> probablemente pasos muy cortos casi arrastrando los pies. Puede ser una
+  forma valida de caminar en piso resbaloso, pero hay que verlo en video; relacionado con el premio fase_pies mal
+  calibrado (entrada [9]). Candidato a generacion propia (v01d / recalibrar fase_pies y tiempo en el aire).
+Problemas y solucion:
+  - rsync hacia /mnt/c fallo ("chgrp ... Operation not permitted", "mkstemp ... Operation not permitted"): rsync crea un
+    archivo temporal y copia permisos/grupo de Linux, que el disco de Windows no admite. Con --inplace --no-perms
+    --no-owner --no-group copia los archivos (solo avisa que no puede poner la fecha). cp -r funciona sin avisos.
+  - Para no copiar mas: ~/nao_rl/runs, logs, noches y los scripts son enlaces simbolicos a C:\demo_carril\rl. El
+    entrenamiento escribe en /mnt/c sin errores y el asistente puede leer los resultados directamente.
+  - El log de la cola (logs/noche_*.log) muestra el progreso con retraso porque Python acumula la salida cuando va a un
+    archivo. No afecta el entrenamiento (progreso.csv se escribe en cada evaluacion). Arreglo propuesto:
+    PYTHONUNBUFFERED=1 en cola_noche.sh.
+  - El Administrador de tareas muestra la grafica "3D"; el entrenamiento usa "Compute/Cuda". Los primeros ~4-6 min de cada
+    corrida la GPU esta al 0 % porque JAX compila en el procesador; despues ~92 % de uso, ~92 W, 56-66 C.
+Decision: noche 1 lanzada a las 23:10 con tmux (rl/noches/noche_01.txt): v01b s1, v01c s1, v02 s0 (120 M), v03 s0 (120 M)
+  y evaluacion automatica al final.
+Siguiente paso: revisar la noche en la manana (resumen, evaluaciones, videos de los pies).

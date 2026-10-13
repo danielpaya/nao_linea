@@ -1,0 +1,12 @@
+# Noche 1 (2026-10-12). Una corrida por linea = argumentos de entrenar.py.
+# ~56 min por cada 60 M de pasos (+~4 min de compilacion). Evaluacion al final: ~13 min por corrida.
+# Total estimado: ~6.5 h de entrenamiento + ~55 min de evaluacion.
+#
+# 1) Varianza: la diferencia v01b (12 cm de desvio) vs v01c (60 cm, pero aguanta mejor empujones) es real o suerte?
+nao_v01b --semilla 1 --pasos 60000000
+nao_v01c --semilla 1 --pasos 60000000
+# 2) Robustez (parten de la configuracion de v01c: rumbo + cadera):
+#    v02 = friccion 0.3-1.2, masas +-10 %, kp x0.8-1.2
+nao_v02 --semilla 0 --pasos 120000000
+#    v03 = v02 + motor debil 50-100 % + retraso 0-2 ciclos (el retraso de 3 tumba a todas las anteriores)
+nao_v03 --semilla 0 --pasos 120000000
