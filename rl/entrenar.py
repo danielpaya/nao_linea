@@ -39,6 +39,7 @@ ESCENA = os.path.join(AQUI, "nao_assets", "scene_mjx.xml")
 # Cada generacion: hipotesis + cambios al entorno (acumulados) + aleatorizacion (None = mundo nominal)
 RUMBO = {"rumbo.activo": True, "recompensa.escalas.seguir_rumbo": 1.0}
 CADERA = {"recompensa.escalas.postura_cadera": -0.5}
+PIES = {"recompensa.sigma_pies": 0.0005}
 MUNDO = dict(friccion=(0.3, 1.2), masa=(0.9, 1.1), kp=(0.8, 1.2))
 GENERACIONES = {
     "nao_v01": dict(hipotesis="Base: mundo nominal. Debe caminar a 0.3 m/s pero ser fragil a cambios.",
@@ -49,11 +50,41 @@ GENERACIONES = {
     "nao_v01c": dict(hipotesis="Corrige v01 (piernas torcidas): castigo a HipYawPitch/HipRoll lejos de la postura. "
                                "Debe caminar con las piernas rectas.",
                      entorno=dict(RUMBO, **CADERA), aleatorizar=None),
+    "nao_v01d": dict(hipotesis="Corrige v01b/v01c/v02 (arrastran los pies, tiempo_aire ~0): fase_pies con tolerancia "
+                               "0.0005 en vez de 0.01, para que arrastrar el pie ya no de casi todo el premio. "
+                               "Debe levantar los pies ~3 cm sin perder velocidad ni rumbo.",
+                     entorno=dict(RUMBO, **CADERA, **PIES), aleatorizar=None),
+    "nao_v01e": dict(hipotesis="v01d + los codos (LElbowRoll, RElbowRoll) en la accion: con los brazos mas utiles para "
+                               "el equilibrio y para frenar el giro, debe ir mas recta (v01d se tuerce 8-10 grados) "
+                               "sin perder robustez.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, codos=True), aleatorizar=None),
+    "nao_v02r": dict(hipotesis="v01d + retraso de la accion de 0-2 ciclos (0-48 ms) al azar: deja de caerse con retraso "
+                               "(v01d: 0/8 metas con 3 ciclos y 21 s en vez de 17 s con 1 ciclo).",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2), aleatorizar=None),
+    "nao_v02d": dict(hipotesis="v01d + friccion, masas y kp al azar: generaliza aun mejor a pisos y motores distintos "
+                               "(v01d ya llega 8/8 en esas condiciones pero se desvia mas).",
+                     entorno=dict(RUMBO, **CADERA, **PIES), aleatorizar=dict(MUNDO)),
+    # --- noche 2: base nao_v02r (v01d + retraso), la unica que aguanta 72 ms de retraso (bitacora [23]) ---
+    "nao_v03c": dict(hipotesis="v02r + codos: suma lo recto de v01e (desvio 9.9 cm) a lo robusto de v02r.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True), aleatorizar=None),
+    "nao_v03m": dict(hipotesis="v02r + friccion, masas y kp al azar: menos desvio con piso resbaloso y motor debil "
+                               "(v02r: friccion 0.2 -> 27.9 cm, motor 40 -> 37.8 cm).",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2), aleatorizar=dict(MUNDO)),
+    "nao_v03e": dict(hipotesis="v02r + empujones (0.05-0.3 m/s cada 3-6 s): se recupera de golpes fuertes "
+                               "(v02r: empujon 0.45 -> 1/8 metas).",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, **{"empujones.activos": True}),
+                     aleatorizar=None),
+    "nao_v04": dict(hipotesis="v02r + codos + mundo al azar + empujones (los tres cambios de v03c/v03m/v03e juntos, "
+                              "medidos por separado en esas corridas). Candidata final de la etapa a 0.3 m/s.",
+                    entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, **{"empujones.activos": True}),
+                    aleatorizar=dict(MUNDO)),
     "nao_v02": dict(hipotesis="+ friccion, masas y kp al azar: generaliza a pisos y motores distintos.",
                     entorno=dict(RUMBO, **CADERA), aleatorizar=dict(MUNDO)),
     "nao_v03": dict(hipotesis="+ motor debil y retraso de 0-2 ciclos: aguanta fallas que v02 no aguanta.",
                     entorno=dict(RUMBO, **CADERA, latencia_max=2), aleatorizar=dict(MUNDO, motor_debil=(0.5, 1.0))),
-    "nao_v04": dict(hipotesis="+ empujones: se recupera de golpes.",
+    # nunca se entreno: era la v04 de la linea vieja (base v01c). Renombrada el 2026-10-13 porque tapaba a la nao_v04
+    # nueva (dos claves iguales en un dict: gana la ultima). Ver bitacora [25].
+    "nao_v04_antigua": dict(hipotesis="+ empujones: se recupera de golpes.",
                     entorno=dict(RUMBO, **CADERA, latencia_max=2, **{"empujones.activos": True}),
                     aleatorizar=dict(MUNDO, motor_debil=(0.5, 1.0))),
 }

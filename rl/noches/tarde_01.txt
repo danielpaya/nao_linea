@@ -1,0 +1,4 @@
+# Tarde del 2026-10-13 (~3 h): dos hermanas de nao_v01d, cada una con UN cambio.
+# Arrancar con la espera (ver bitacora [18]).
+nao_v02r --semilla 0 --pasos 60000000
+nao_v02d --semilla 0 --pasos 60000000

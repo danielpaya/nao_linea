@@ -1,0 +1,5 @@
+# Noche 2 (2026-10-13): base nao_v02r. Tres hermanas con UN cambio cada una + la combinacion (bitacora [24]).
+nao_v03c --semilla 0 --pasos 60000000
+nao_v03m --semilla 0 --pasos 60000000
+nao_v03e --semilla 0 --pasos 60000000
+nao_v04 --semilla 0 --pasos 120000000

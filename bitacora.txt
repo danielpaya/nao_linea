@@ -204,3 +204,301 @@ Problemas y solucion:
 Decision: noche 1 lanzada a las 23:10 con tmux (rl/noches/noche_01.txt): v01b s1, v01c s1, v02 s0 (120 M), v03 s0 (120 M)
   y evaluacion automatica al final.
 Siguiente paso: revisar la noche en la manana (resumen, evaluaciones, videos de los pies).
+
+=== [14] 2026-10-13 09:30 · FALLO: la noche 1 se corto a las ~00:50 (WSL se apago) ===
+Objetivo: correr v01b s1, v01c s1, v02 s0 (120 M) y v03 s0 (120 M) durante la noche (rl/noches/noche_01.txt).
+Que paso: solo termino v01b s1 (00:07, 56.6 min, runs/nao_v01b_s1_20261012_231041). v01c s1 quedo en 47 de 60 M
+  (ultimo checkpoint 00:50, estado.txt = "corriendo", runs/nao_v01c_s1_20261013_000720). v02 y v03 no arrancaron y no
+  hubo resumen. Se perdieron ~7 h de GPU.
+Diagnostico:
+  - El log (logs/noche_20261012_231037.log) no tiene la linea "termino con codigo" de la corrida 2 -> murio la cola
+    completa, no solo Python (si Python falla, la cola lo registra y sigue).
+  - Eventos de Windows: sin suspension (42), sin reinicio (1074), sin apagado inesperado (41/6008). Los errores de
+    Windows Error Reporting de las 23:41 son envios de fallos viejos (dumps de febrero, julio, agosto y septiembre; entre
+    ellos dos reinicios del driver de video, watchdog 0x193, a vigilar).
+  - En WSL: uptime -s = 09:26 (arranco al abrir la terminal) y tmux sin servidor -> se apago la maquina virtual de WSL.
+  - WSL 3.0.3.0 sin .wslconfig. Causa mas probable: WSL apaga la distro por inactividad o al cerrarse la ultima ventana,
+    aunque haya procesos en tmux. No confirmado.
+Resultado util de la noche (progreso.csv): v01b s1 es reproducible: recompensa 93.4, seguir_vel 1439/1500,
+  seguir_rumbo 990/1000 (s0: 93.7, 1415, 992). v01c s1 a los 47 M: 91.6, seguir_vel 1428, seguir_rumbo 990.
+Solucion:
+  - Propuesta al usuario: C:\Users\usuario\.wslconfig con [wsl2] vmIdleTimeout=-1 y [general] instanceIdleTimeout=-1
+    (sin verificar que WSL 3.0 respete ambas claves) y dejar una ventana de Ubuntu abierta mientras entrena.
+  - rl/cola_noche.sh (aprobado por el usuario): (1) salta las corridas que ya tienen carpeta en runs/ con estado
+    "terminado" y la misma generacion, semilla y pasos -> si se corta, se relanza la misma lista y sigue donde iba;
+    las que quedaron "corriendo" se repiten desde cero. (2) PYTHONUNBUFFERED=1: el log se escribe al momento.
+    Probado con las carpetas reales: salto v01b s1 y repitio v01c s1.
+Decision: no relanzar la noche de dia; usar el dia para arreglar los pies (entrada [15]).
+Siguiente paso: v01d.
+
+=== [15] 2026-10-13 12:50 · nao_v01d: tolerancia de fase_pies 0.01 -> 0.0005 (levantar los pies) ===
+Objetivo: que el robot levante los pies. Ultimas mediciones: tiempo_aire ~0 en v02 s9 y v01c s1; 12-18 en v01b/v01c
+  s0 (correccion: en el chat se dijo "ninguna levanta los pies"; lo correcto es que levantaban poco).
+Diagnostico: fase_pies = exp(-sum((z_pie - z_deseada)^2) / 0.01). Con una curva de 3 cm, 0.01 es muy laxo. Calculado
+  sobre un ciclo de marcha: arrastrar el pie da 97 % del premio, subir la mitad 99 %. Con 0.002: 86 %/96 %;
+  con 0.0005: 61 %/86 %; con 0.0002: 44 %/71 %. El 0.01 viene de la config del G1 (pasos mas altos).
+Que se hizo: nao_carrera.py: nueva config recompensa.sigma_pies (por defecto 0.01, asi v01-v02 se reproducen igual).
+  entrenar.py: nao_v01d = v01c + sigma_pies 0.0005 (un solo cambio). Semilla 0, 60 M pasos, 55.4 min
+  (runs/nao_v01d_s0_20261013_094320; config.json confirma sigma_pies 0.0005). Hubo un primer arranque abortado
+  (runs/nao_v01d_s0_20261013_093806).
+Resultado entrenamiento (progreso.csv, ultima evaluacion; v01c s0 entre parentesis):
+  tiempo_aire 31 (10-17), pies_resbalan -7 (-11 a -23), seguir_vel 1405 (1440), seguir_rumbo 992 (992),
+  fase_pies 883 con la tolerancia nueva (arrastrar daria ~610). Caida temporal 90.6 -> 72.4 a los 40 M (la v01b
+  tuvo la misma) y se recupero. La recompensa total no es comparable con generaciones anteriores (cambio un termino).
+Resultado ver_politica.py (5 carreras): 5/5 metas, 16.9-17.2 s, 0.294 m/s, desvio max medio 28.0 cm, rumbo max medio
+  8.8 deg. A los 2 s rumbo < 1 deg; al final siempre negativo (-4.8 a -10.6 deg). Hasta ~5 deg se explican por la
+  deriva simulada del giroscopio (0.005 rad/s x 17 s); el resto, con signo constante, sugiere asimetria del paso.
+  Video: runs/nao_v01d_s0_20261013_094320/carrera.mp4. Usuario: "ya lo levanta mejor el pie, pero lo veo algo
+  descalibrado".
+Resultado evaluar.py (evaluacion.csv, 11 condiciones x 8 carreras, 12.9 min):
+                       v01b      v01c      v01d
+  metas no vistas      66/80     71/80     77/80 (96 %)
+  t nominal            16.4 s    17.2 s    17.1 s
+  desvio nominal       12 cm     60 cm     19.9 cm
+  empujon 0.45 m/s     2/8       7/8       6/8 metas
+  retraso 3 ciclos     0/8       0/8       0/8 (cae en ~0.5 m)
+  v01d: friccion 0.2/0.5/1.5, kp 70 y motor 70 -> 8/8; motor 40 -> 7/8; retraso 1 -> 8/8 pero 21.0 s, 7/8 se
+  saldrian del carril sin vision.
+Interpretacion: hipotesis confirmada: levanta mas el pie sin perder velocidad ni rumbo, y ademas es la mas robusta
+  (un pie que se arrastra se engancha y tropieza). Sigue sin aguantar 72 ms de retraso y se tuerce 8-10 deg.
+Decision: v01d pasa a ser la base. Las generaciones de robustez (fricion/masa/kp, motor debil, retraso) hay que
+  rehacerlas sobre v01d con nombre nuevo, porque v02/v03 partian sin el arreglo de los pies.
+Siguiente paso: codos (entrada [16]).
+
+=== [16] 2026-10-13 13:00 · nao_v01e: codos (LElbowRoll, RElbowRoll) en la accion · PENDIENTE de entrenar ===
+Objetivo: pedido del usuario. Hipotesis: con los codos los brazos ayudan mas al equilibrio y a frenar el giro;
+  debe ir mas recta que v01d (8-10 deg) sin perder robustez.
+Que se hizo (aprobado por el usuario, opcion "ElbowRoll en la accion"): nao_carrera.py: config codos=False por defecto;
+  con codos=True la politica controla 15 motores (13 + LElbowRoll, RElbowRoll) y observa 56 valores por paso en vez de
+  50. Los tamanos que estaban fijos en 13 ahora salen del numero de motores. entrenar.py: nao_v01e = v01d + codos=True.
+  No se pudo probar en la sesion del asistente (sin JAX): falta "entrenar.py nao_v01e --prueba".
+Riesgo: en la escena de entrenamiento (escena_mjx.py) los brazos no chocan con el cuerpo; hay que revisar en el video
+  que el antebrazo no atraviese la cadera o el muslo.
+Opciones descartadas: ElbowRoll + ElbowYaw (17 motores, mas lento de aprender, mas riesgo de choques); codos fijos
+  doblados (no cambia la accion, solo la postura).
+Siguiente paso: prueba corta, 60 M pasos, evaluar.py y video; comparar con v01d.
+
+=== [17] 2026-10-13 14:15 · nao_v01e (codos) entrenada: sin mejora clara en el entrenamiento ===
+Que se hizo: nao_v01e semilla 0, 60 M pasos, 55.2 min (runs/nao_v01e_s0_20261013_125441; config.json confirma
+  codos=true y sigma_pies 0.0005). La prueba corta paso sin errores (los nombres LElbowRoll/RElbowRoll existen).
+Resultado entrenamiento (progreso.csv, ultima evaluacion; v01d entre parentesis): recompensa 86.8 (90.2),
+  seguir_vel 1393 (1405), seguir_rumbo 987 (992), seguir_giro 481 (597), tiempo_aire 32 (31), pies_resbalan -7 (-7),
+  limites -1 (0). Mejor punto: 89.6 a los 47 M (checkpoints/politica_0047M.pkl).
+Interpretacion: aprende igual de rapido (sin caidas desde ~20 M) pero no mejora a v01d en ningun termino y es mas
+  inestable: dos caidas de la recompensa (88.5 -> 82.2 a los 40 M y 89.6 -> 71.1 a los 53 M) contra una de v01d.
+  limites < 0 (antes 0): los codos llegan cerca del limite de su rango; probablemente la postura base del codo esta
+  pegada a un extremo. seguir_giro mas bajo: obedece peor las ordenes de giro.
+Siguiente paso: evaluar.py y video (rumbo y desvio vs v01d; brazo atravesando la cadera). La hipotesis (mas recta)
+  solo se confirma o descarta con la evaluacion.
+
+=== [18] 2026-10-13 14:20 · Cola de la tarde (~3 h, sin supervision): nao_v02r y nao_v02d sobre v01d ===
+Objetivo: aprovechar ~3 h en que el usuario no puede estar pendiente, mientras termina la evaluacion de v01e.
+Decision (aprobada por el usuario, opcion "Retraso + mundo"): dos hermanas de v01d, cada una con UN cambio respecto a
+  v01d (no en cadena, porque no hay nadie para decidir entre una y otra):
+  - nao_v02r = v01d + latencia_max 2 (retraso de la accion de 0-48 ms al azar). Hipotesis: deja de caerse con
+    retraso (v01d: retraso_3 0/8 metas; retraso_1 21.0 s en vez de 17.1 s). Es la falla mas grave para el robot real.
+  - nao_v02d = v01d + friccion 0.3-1.2, masas +-10 %, kp x0.8-1.2. Hipotesis: generaliza aun mejor (v01d ya llega 8/8
+    con fricciones no vistas pero se desvia 29-31 cm).
+  60 M pasos cada una (~1 h) + evaluacion automatica de ambas (~13 min cada una). Lista: rl/noches/tarde_01.txt.
+  v01e no se uso como base: en el entrenamiento no mejoro a v01d (entrada [17]); su evaluacion sigue pendiente.
+  Nombres nuevos (v02r, v02d) porque nao_v02/nao_v03 partian de v01c, sin el arreglo de los pies.
+Arranque: la cola espera en tmux a que no haya ningun evaluar.py/ver_politica.py corriendo, para no pelear por la
+  memoria de la GPU con la evaluacion de v01e.
+Nota de proceso: la escritura de la bitacora de las 13:11 fallo sin aviso (el archivo cambio de fecha pero quedo con
+  16382 bytes); se reescribio a las 14:13 y desde entonces se verifica el tamano despues de cada escritura.
+Siguiente paso: al volver, leer runs/resumen_*.md y las dos evaluaciones; comparar con v01d.
+
+=== [19] 2026-10-13 14:30 · Vigilante: relanzar la cola automaticamente si WSL o la cola se mueren ===
+Objetivo: que una caida como la de la noche 1 (entrada [14]) no cueste mas que la corrida en curso.
+Decision (aprobada por el usuario, "Opcion 1 + Claude Code luego"): un vigilante sin IA que vive en Windows. Un
+  agente dentro de WSL no lo habria evitado: se habria apagado con WSL. Claude Code en Ubuntu queda para despues.
+Que se hizo:
+  - rl/cola_noche.sh: al arrancar anota la lista y la hora de inicio en cola_activa.txt y lo borra al terminar; en un
+    relanzamiento conserva la hora de inicio original (para que el resumen incluya todo lo de esa lista); marca
+    como "cortado" el estado.txt de las corridas que quedaron "corriendo" sin entrenamiento vivo; nuevo
+    "bash cola_noche.sh --parar" para detenerla a proposito sin que el vigilante la relance.
+  - rl/vigilante.sh: ciclo cada 2 min; si existe cola_activa.txt y no corre ni la cola ni ningun
+    entrenar/evaluar/ver_politica/resumen, relanza la cola en tmux (sesion "cola"). flock evita dos vigilantes.
+    Log en logs/vigilante.log. Mientras corre, WSL tiene un cliente conectado y no se apaga solo.
+  - Windows: tarea programada "NAO vigilante" (al iniciar sesion y cada 10 min, sin duplicarse, sin limite de tiempo)
+    que lanza wsl.exe -> bash ~/nao_rl/vigilante.sh. La crea el usuario con PowerShell.
+Prueba (en la sesion del asistente, con entrenamientos falsos de 6 s): se mato la cola a mitad de la 2a corrida ->
+  el vigilante la relanzo a los ~10 s, la 2a corrida quedo "cortado" y se repitio, la 1a se salto, la 3a corrio, hubo
+  resumen y cola_activa.txt se borro; despues no relanzo nada. --parar detuvo cola y entrenamiento y no hubo
+  relanzamiento. Sin probar todavia en el PC del usuario (WSL real, Programador de tareas).
+Limitacion: si se cae a mitad de una corrida, esa corrida se repite desde cero (hasta ~1 h perdida).
+Siguiente paso: el usuario crea el enlace en ~/nao_rl y la tarea de Windows; verificar logs/vigilante.log.
+
+=== [20] 2026-10-13 14:35 · Evaluacion de nao_v01e (codos) y CORRECCION de la entrada [15] ===
+Correccion: en [15] se escribio "metas no vistas v01d 77/80 (96 %)" y "es la mas robusta". Es un error de suma: con
+  runs/nao_v01d_s0_20261013_094320/evaluacion.csv son 8+8+8+8+8+7+8+0+8+6 = 69/80 (86 %). Queda entre v01b (66/80) y
+  v01c (71/80): no es la mas robusta. Lo demas de [15] (pies, velocidad, rumbo) sigue valido.
+Resultado (runs/nao_v01e_s0_20261013_125441/evaluacion.csv, 11 condiciones x 8 carreras; v01d -> v01e):
+  nominal          desvio 19.9 -> 9.9 cm   rumbo 7.9 -> 4.0 deg   se saldria 3/8 -> 1/8   17.1 -> 17.2 s
+  friccion 1.5     desvio 31.3 -> 16.0 cm  se saldria 7/8 -> 2/8
+  kp 70            desvio 24.4 -> 12.9 cm  se saldria 4/8 -> 1/8  pero 18.5 -> 20.0 s
+  retraso 1        desvio 31.4 -> 20.2 cm  se saldria 7/8 -> 3/8  20.1 s
+  empujon 0.45     metas 6/8 -> 2/8 (6 caidas)  rumbo 11.6 -> 19.2 deg
+  retraso 3        0/8 en ambas
+  metas no vistas  69/80 -> 65/80 (la diferencia es casi toda el empujon fuerte)
+Interpretacion: la hipotesis de [16] se confirma: con los codos va bastante mas recta (desvio y rumbo ~la mitad en
+  casi todas las condiciones, menos salidas del carril). A cambio se recupera peor de empujones fuertes. Hipotesis:
+  los brazos ahora se mueven para corregir el rumbo y un golpe fuerte los saca de esa postura (verlo en el video).
+  En el entrenamiento ([17]) no se notaba la mejora: seguir_rumbo ya estaba saturado en ~990/1000 y el desvio lateral
+  no es parte de la recompensa. -> lo que importa para la carrera hay que medirlo con evaluar.py, no con progreso.csv.
+Decision: no se cambia la cola de la tarde (v02r, v02d sobre v01d, entrada [18]) para no retrasarla; v01e queda como
+  candidata a base y su comparacion con v01d se decide junto con los resultados de la tarde. Pendiente: revisar en el
+  video si el antebrazo atraviesa la cadera.
+
+=== [21] 2026-10-13 14:40 · Video de nao_v01e (ver_politica.py, 5 carreras) ===
+Resultado (salida de ver_politica.py; video runs/nao_v01e_s0_20261013_125441/carrera.mp4): 5/5 metas, 0 caidas,
+  16.7-17.5 s, 0.294 m/s, desvio max medio 6.8 cm (1.8-14.8), rumbo max medio 3.8 deg. Rumbo al final: +0.6, -4.3,
+  -1.3, -0.3, -5.0 deg. v01d en la misma prueba ([15]): 28.0 cm, 8.8 deg y siempre negativo (-4.8 a -10.6).
+Interpretacion: la mas recta hasta ahora (v01b: 12 cm en la evaluacion). El sesgo de giro siempre hacia el mismo
+  lado de v01d casi desaparece: lo que queda es del orden de la deriva simulada del giroscopio (~5 deg en 17 s).
+  Pendiente: confirmacion visual del usuario (brazos atravesando la cadera, balanceo de brazos).
+Siguiente paso: cola de la tarde (v02r, v02d) y decidir base v01d vs v01e con esos resultados.
+
+=== [22] 2026-10-13 16:50 · Cola de la tarde: nao_v02d (v01d + friccion/masa/kp al azar) entrenada y evaluada ===
+Ejecucion: la cola corrio completa sin intervencion (logs/noche_*.log de las 14:35): nao_v02r 55.7 min, nao_v02d 56.0 min,
+  luego resumen_manana.py. Al arrancar marco como "cortado" runs/nao_v01c_s1_20261013_000720 (la corrida de la noche 1).
+Entrenamiento v02d (progreso.csv): recompensa 90.0 a los 34 M, colapso a 51.2 a los 40 M (duracion 808: volvio a
+  caerse en algunos episodios), recuperada a 88.7 (47 M) y final 91.8. Es el colapso de PPO mas fuerte visto hasta
+  ahora; se recupero solo en una evaluacion.
+Evaluacion (runs/nao_v02d_s0_20261013_153117/evaluacion.csv; v01d entre parentesis):
+  nominal       17.5 s (17.1)  desvio 20.4 (19.9) cm  rumbo 5.2 (7.9) deg  se saldria 3/8 (3/8)
+  friccion 0.2  desvio 23.4 (29.8)    friccion 1.5  desvio 15.9 (31.3), se saldria 3/8 (7/8)
+  kp 70         19.2 s (18.5), desvio 27.3 (24.4)
+  motor 40      8/8 (7/8)
+  retraso 1     desvio 21.8 (31.4), se saldria 3/8 (7/8)
+  retraso 3     0/8 (0/8)
+  empujon 0.45  5/8 (6/8)
+  metas fuera del nominal: 69/80, igual que v01d (friccion 0.5 ahora cuenta como vista).
+Interpretacion: la hipotesis se cumple solo en parte: no llega a mas metas, pero el rumbo baja de ~8 a ~5 deg en casi
+  todas las condiciones y se desvia menos en fricciones extremas y con retraso. A cambio es un poco mas lenta con
+  motores blandos. Sigue sin aguantar 72 ms de retraso (eso lo prueba v02r, que no entreno con friccion al azar).
+Siguiente paso: evaluacion de v02r (en curso) y decidir la base.
+
+=== [23] 2026-10-13 16:55 · nao_v02r (v01d + retraso 0-2 ciclos): primera politica que aguanta 72 ms de retraso ===
+Evaluacion (runs/nao_v02r_s0_20261013_143532/evaluacion.csv; v01d entre parentesis; resumen en
+  runs/resumen_20261013_1652.md):
+  nominal       8/8, 17.2 s (17.1), desvio 12.3 (19.9) cm, rumbo 5.4 (7.9) deg, se saldria 0/8 (3/8)
+  retraso 1     17.3 s (21.0), desvio 14.5 (31.4), se saldria 1/8 (7/8)     [ahora condicion vista]
+  retraso 3     8/8 (0/8), 19.3 s, desvio 30.8 cm     [NO vista: entreno con maximo 2 ciclos]
+  friccion 0.5 / 1.5   desvio 11.3 / 11.4 cm, 0/8 se saldrian;  friccion 0.2  27.9 cm, 4/8
+  kp 70 8/8 18.4 s;  motor 70 8/8;  motor 40 8/8 pero desvio 37.8 cm
+  empujon 0.25  8/8;  empujon 0.45  1/8 (7 caidas) (v01d: 6/8)
+  metas fuera del nominal: 73/80 (v01d 69, v02d 69, v01e 65). Metas en condiciones no vistas: 65/72 (90 %).
+Interpretacion: hipotesis confirmada y con margen: aguanta 3 ciclos de retraso sin haberlos visto, con 1 ciclo ya no
+  pierde velocidad, y ademas va mas recta que v01d en casi todo (entrenar con retraso parece hacer la caminata mas
+  conservadora y estable). Debilidad comun de v01e y v02r: empujones fuertes (1/8 y 2/8). Ninguna generacion ha
+  entrenado todavia con empujones.
+Comparacion de la tarde (todas 60 M, semilla 0): v02r es la mejor base para el robot real (latencia = riesgo #1);
+  v01e la mas recta; v02d mejora poco.
+Siguiente paso: cola de la noche 2 sobre v02r (ver entrada siguiente).
+
+=== [24] 2026-10-13 17:00 · Cola de la noche 2 (~6 h): base nao_v02r ===
+Decision (aprobada por el usuario, opcion "Si, las 4"): v02r es la base (unica que aguanta 72 ms de retraso, [23]).
+  Lista rl/noches/noche_02.txt; generaciones en rl/entrenar.py:
+  - nao_v03c = v02r + codos (60 M). Hipotesis: suma lo recto de v01e (9.9 cm) a lo robusto de v02r.
+  - nao_v03m = v02r + friccion/masa/kp al azar (60 M). Hipotesis: menos desvio con friccion 0.2 (27.9 cm) y motor 40
+    (37.8 cm).
+  - nao_v03e = v02r + empujones 0.05-0.3 m/s cada 3-6 s (60 M). Hipotesis: arregla empujon 0.45 (1/8). Es la primera
+    vez que se entrena con empujones: ese codigo (nao_carrera.py, paso 1 de step) solo se habia usado en evaluar.py,
+    que aplica sus propios empujones. Si falla, la cola sigue con la siguiente y queda en el log.
+  - nao_v04 = v02r + codos + mundo + empujones (120 M). Rompe la regla de un cambio por generacion a proposito:
+    cada uno de los tres cambios se mide por separado en v03c/v03m/v03e esa misma noche. Candidata final de la etapa
+    a 0.3 m/s antes de subir la velocidad.
+  Estimado: 5 h de entrenamiento + ~50 min de evaluacion automatica. Protegida por el vigilante ([19]).
+Siguiente paso: "revisa la noche" en la manana; despues, etapa de velocidad (motores realistas, partir de una
+  politica entrenada, subir 0.35 -> 0.5 m/s) y vision simulada.
+
+=== [25] 2026-10-13 19:55 · ERROR: la v04 de la noche 2 arranco con la configuracion vieja ===
+Que paso: el log (logs/noche_20261013_165749.log, 19:45) mostro "Generacion nao_v04: + empujones: se recupera de golpes",
+  que es la hipotesis de la nao_v04 vieja (linea de v01c: sin sigma_pies, sin codos, con motor debil). Causa: en [24]
+  se agrego la nao_v04 nueva al diccionario GENERACIONES de entrenar.py sin notar que ya existia una clave "nao_v04";
+  en un dict de Python, con dos claves iguales gana la ultima, que era la vieja. Las otras tres de la noche (v03c, v03m,
+  v03e) no existian antes y su hipotesis en el log es la correcta.
+Solucion (aprobada por el usuario): la vieja se renombro a "nao_v04_antigua" (nunca se habia entrenado); se verifico
+  con ast que GENERACIONES ya no tiene claves duplicadas (14 generaciones). El usuario detiene la cola
+  (cola_noche.sh --parar) a los ~8 min de la v04 vieja y la relanza: salta v03c/v03m/v03e (terminadas) y la corrida
+  cortada queda con estado "cortado" (runs/nao_v04_s0_20261013_194513, descartada).
+Leccion: al agregar generaciones, revisar que el nombre no exista (ahora se revisa con ast antes de enviar).
+Resultados de entrenamiento de la noche hasta ahora (log): v03c 88.7 (caida temporal a 69.4 a los 53 M), v03m 90.9,
+  v03e 88.7 (con empujones; la recompensa no es comparable directamente). Evaluaciones: al final de la cola.
+
+=== [26] 2026-10-13 20:15 · Noche 2 relanzada con la nao_v04 correcta ===
+Log (logs/noche_*.log de las 19:55): "marcada como cortada: runs/nao_v04_s0_20261013_194513" (v04 vieja, descartada);
+  se saltaron v03c, v03m y v03e (terminadas); arranco nao_v04 con la hipotesis correcta (v02r + codos + mundo +
+  empujones), runs/nao_v04_s0_20261013_195524. A los 13 M: recompensa 17.5, duracion 855 (aprende mas lento que las
+  hermanas, ~26-30 a los 13 M: esperado con las tres dificultades juntas; por eso tiene 120 M).
+Problema detectado: se relanzo con "cola_noche.sh --parar", que borra cola_activa.txt y con ella la hora de inicio
+  original (16:57). El resumen final evalua solo lo entrenado en las ultimas ~2 h -> dejaria sin evaluar v03c y v03m.
+  Solucion: al terminar la cola, correr resumen_manana.py --horas 6 (solo evalua lo que no tenga evaluacion.csv).
+Mejora pendiente: que --parar no sea la forma de "reiniciar" (para eso basta matar la cola y dejar que el vigilante
+  la relance con la hora original), o que el resumen use la lista de la cola en vez de una ventana de horas.
+
+=== [27] 2026-10-13 22:05 · nao_v04 (v02r + codos + mundo + empujones, 120 M): la mejor hasta ahora ===
+Entrenamiento (runs/nao_v04_s0_20261013_195524, 97.9 min): aprende mas lento al principio (17.5 a los 13 M) pero sin
+  colapsos fuertes; final 90.5.
+Evaluacion (evaluacion.csv; v02r entre parentesis):
+  nominal       8/8, 17.1 s, desvio 10.4 (12.3) cm, rumbo 3.3 (5.4) deg, se saldria 0/8 (0/8)
+  retraso 3     8/8 (8/8), desvio 10.7 (30.8) cm, se saldria 1/8 (4/8)
+  friccion 0.2  8/8, desvio 19.6 (27.9);  friccion 1.5  8/8, desvio 27.0 (11.4), se saldria 3/8 (0/8)
+  kp 70         8/8, 18.7 s, desvio 33.3 (15.9) cm, se saldria 6/8 (1/8)   <- su peor condicion
+  motor 40      8/8, desvio 16.5 (37.8)
+  empujon 0.45  4/8 (1/8): mejora pero sigue siendo lo mas debil
+  metas fuera del nominal: 76/80 (v02r 73, v01d 69). Metas en no vistas: 93 % (resumen_20261013_2157.md).
+Interpretacion: la combinacion funciona: aguanta todo menos la mitad de los empujones fuertes, y es la mas recta con
+  retraso. Empeora el desvio con motores blandos (kp 70) y friccion alta: posible efecto de los codos o del mundo al
+  azar; se aclara con las evaluaciones de v03c/v03m/v03e.
+Problemas: (1) el resumen evaluo tambien la v04 vieja cortada (runs/nao_v04_s0_20261013_194513, checkpoint de 0 M):
+  0/8 en todo, 12 min perdidos -> mejora pendiente: resumen_manana.py debe saltar corridas con estado "cortado".
+  (2) v03c, v03m y v03e quedaron sin evaluar (efecto del --parar, entrada [26]); se evaluan con
+  resumen_manana.py --horas 6.
+Siguiente paso: evaluaciones de v03c/v03m/v03e y video de v04; luego etapa de velocidad sobre v04.
+
+=== [28] 2026-10-13 22:50 · Evaluacion de v03c, v03m, v03e (hermanas de v04) ===
+Fuente: runs/<corrida>/evaluacion.csv y runs/resumen_20261013_2244.md (resumen_manana.py --horas 6).
+                 t nom   desvio nom  rumbo  kp 70        friccion 0.2  retraso 3   empujon 0.45   % metas no vistas
+  v02r (base)    17.2 s  12.3 cm     5.4    8/8 15.9 cm  8/8 27.9 cm   8/8 30.8    1/8            90
+  v03c +codos    18.0 s  18.1 cm     7.8    0/8 (8 caidas) 8/8 16.8    8/8 16.1    1/8            79
+  v03m +mundo    16.6 s  12.2 cm     4.4    8/8 20.0     6/8 (2 caidas) 8/8 17.4   0/8            81
+  v03e +empujon  17.2 s  23.5 cm     3.8    8/8 22.5     8/8 20.9      8/8 21.8    2/8            91
+  v04 (las 3)    17.1 s  10.4 cm     3.3    8/8 33.3     8/8 19.6      8/8 10.7    4/8            93
+Interpretacion:
+  - Ninguna hermana confirma su hipotesis por si sola: los codos sobre v02r empeoran (se cae con motores blandos y ya no
+    va mas recta, al reves que v01e sobre v01d); entrenar con empujones de hasta 0.3 m/s casi no ayuda con 0.45 m/s;
+    el mundo al azar la hace la mas rapida (16.6 s) pero se cae en piso muy resbaloso y con empujones fuertes.
+  - La combinacion v04 es mejor que cada parte. Dos explicaciones posibles que este experimento NO separa:
+    (a) interaccion real entre los cambios; (b) v04 entreno el doble (120 M vs 60 M). Ademas todo es 1 semilla.
+    -> Para el paper: no atribuir la mejora de v04 a la combinacion sin una v04 de 60 M y/o hermanas de 120 M y mas
+    semillas.
+  - Debilidades comunes: empujon 0.45 (maximo 4/8) y la sensibilidad a kp 70.
+Decision: v04 queda como base para la etapa de velocidad (es la mejor medida, aunque no se sepa del todo por que).
+Pendiente: videos (ver_politica.py no corre en la cola; hay que lanzarlo aparte).
+
+=== [29] 2026-10-13 22:55 · Cola de la noche 3: controles para el paper sobre nao_v04 ===
+Decision (aprobada por el usuario): sin cambios de codigo, rl/noches/noche_03.txt:
+  - nao_v04 semilla 0 con 60 M (la mitad): si queda igual de bien que la de 120 M, la mejora sobre v03c/v03m/v03e
+    viene de combinar los cambios; si queda como sus hermanas, venia de entrenar el doble ([28]).
+  - nao_v04 semillas 1 y 2 con 120 M: mide cuanto varia el resultado entre semillas (hasta ahora todo es 1 semilla).
+  Estimado: 56 + 98 + 98 min de entrenamiento + 3 x ~12 min de evaluacion ~ 5 h 10. Arranca cuando terminen los
+  videos de ver_politica.py.
+Comparacion del dia (para el README): v01 (ayer) 19.1 s, 233 cm, 23/80 metas fuera del nominal, retraso 3 0/8 ->
+  v04 (hoy) 17.1 s, 10.4 cm, 76/80, retraso 3 8/8, empujon fuerte 4/8. El tiempo no baja porque el comando maximo
+  sigue en 0.3 m/s; la etapa de velocidad empieza manana sobre v04.
+
+=== [30] 2026-10-13 23:10 · Videos de v04, v03c, v03m y v03e (ver_politica.py, 5 carreras cada una) ===
+Videos: runs/<corrida>/carrera.mp4. Resultados de la salida de ver_politica.py (5/5 metas y 0 caidas en las 4):
+  v04    0.288 m/s  desvio max medio 10.2 cm  rumbo max medio 3.4 deg  rumbo final -2.9 a +3.0 (sin sesgo)
+  v03c   0.282 m/s  22.4 cm  8.5 deg  rumbo final siempre negativo (-5.4 a -10.3): vuelve el sesgo de giro de v01d
+  v03m   0.303 m/s  11.3 cm  3.1 deg  la mas rapida (16.1-17.6 s)
+  v03e   0.292 m/s  11.8 cm  5.4 deg
+Coincide con la evaluacion ([27], [28]): v04 la mas recta y sin sesgo; v03c (codos sobre v02r) con sesgo de giro.
+
+=== [31] 2026-10-13 23:20 · README de la rama rl-nao-mjx actualizado y politicas exportadas ===
+Politicas copiadas a rl/politicas/ (politica.pkl, config.json, evaluacion.csv): nao_v01d_s0, nao_v01e_s0, nao_v02r_s0,
+  nao_v04_s0 (verificado en la carpeta del usuario). README: estado (v04), arbol de generaciones, tabla de hipotesis y
+  si se cumplieron, resultados v01-v04, hallazgos del dia 2, nuevos problemas y soluciones, cola reanudable y
+  vigilante, siguientes pasos. El usuario hace el commit y el push a la rama rl-nao-mjx.

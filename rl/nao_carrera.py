@@ -3,7 +3,7 @@
 
 Estructura copiada de los entornos "Joystick" de MuJoCo Playground (G1 y OP3), adaptada al NAO y a la carrera:
   - El actor solo ve sensores que tiene el NAO real (nada de velocidad lineal ni posicion).
-  - Accion cada 24 ms (2 ciclos de 12 ms del NAO), 13 motores: piernas (11) + ShoulderPitch (2).
+  - Accion cada 24 ms (2 ciclos de 12 ms del NAO), 13 motores: piernas (11) + ShoulderPitch (2); 15 con codos=True (+ ElbowRoll).
   - Comando: velocidad adelante (0 a 0.3 m/s) y giro; la vision dara el giro en la carrera.
   - Robustez configurable por generacion: aleatorizacion del mundo, motor debil, retraso y empujones.
 
@@ -33,6 +33,7 @@ MOTORES = ("LHipYawPitch",
            "RHipRoll", "RHipPitch", "RKneePitch", "RAnklePitch", "RAnkleRoll",
            "LShoulderPitch", "RShoulderPitch")
 MOTORES_PIERNA = MOTORES[:11]
+CODOS = ("LElbowRoll", "RElbowRoll")      # desde nao_v01e (config codos=True): doblar/estirar cada codo
 PIES = ("left_foot", "right_foot")          # sites en la planta de cada pie
 
 
@@ -43,6 +44,7 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,           # 1000 x 24 ms = 24 s
         impl="jax",
         action_scale=0.3,              # rad: objetivo = postura_base + accion * escala
+        codos=False,                   # desde nao_v01e: la politica tambien mueve LElbowRoll y RElbowRoll (15 motores)
         historia=3,                    # cuantas observaciones pasadas ve el actor (compensa no ver la velocidad)
         # --- comando ---
         vx=[0.0, 0.3],                 # m/s adelante
@@ -79,6 +81,8 @@ def default_config() -> config_dict.ConfigDict:
             sigma_giro=0.1,            # (rad/s)^2
             separacion_min=0.08,       # m entre pies (el V6 tiene ~3 cm entre piernas: se pisa)
             sigma_rumbo=0.03,          # rad^2 (~10 grados)
+            sigma_pies=0.01,           # m^2: tolerancia de fase_pies. 0.01 viene del G1 y es muy laxa para pasos de
+                                       # 3 cm (arrastrar el pie da 97 % del premio). nao_v01d usa 0.0005 (61 %).
             escalas=config_dict.create(
                 seguir_vel=1.5,
                 seguir_giro=0.75,
@@ -141,11 +145,13 @@ class NaoCarrera(mjx_env.MjxEnv):
         home = m.keyframe("home")
         self._q_inicial = jp.array(home.qpos)
         self._ctrl_home = jp.array(home.ctrl)
-        self._act = np.array([m.actuator(n).id for n in MOTORES])
+        self._motores = MOTORES + (CODOS if self._config.codos else ())
+        n = len(self._motores)                                      # 13, o 15 con codos
+        self._act = np.array([m.actuator(nombre).id for nombre in self._motores])
         jnt = m.actuator_trnid[self._act, 0]
         self._qadr = np.array(m.jnt_qposadr[jnt])
         self._vadr = np.array(m.jnt_dofadr[jnt])
-        self._postura = jp.array(home.qpos[self._qadr])            # postura base de los 13 motores
+        self._postura = jp.array(home.qpos[self._qadr])            # postura base de los motores que controla
         self._lo = jp.array(m.jnt_range[jnt, 0])
         self._hi = jp.array(m.jnt_range[jnt, 1])
         self._lo_suave = self._postura + 0.95 * (self._lo - self._postura)
@@ -157,10 +163,10 @@ class NaoCarrera(mjx_env.MjxEnv):
         rhyp = m.joint("RHipYawPitch")
         self._q_rhyp = int(rhyp.qposadr[0])
         self._q_lhyp = int(m.joint("LHipYawPitch").qposadr[0])
-        self._n_obs = 3 + 3 + 13 + 13 + 13 + 2 + 2                   # 49 por paso
+        self._n_obs = 3 + 3 + n + n + n + 2 + 2                      # 49 por paso (55 con codos)
         if self._config.rumbo.activo:
             self._n_obs += 1                                           # + error de rumbo
-        self._i_cadera = np.array([MOTORES.index(n) for n in ("LHipYawPitch", "LHipRoll", "RHipRoll")])
+        self._i_cadera = np.array([MOTORES.index(c) for c in ("LHipYawPitch", "LHipRoll", "RHipRoll")])
 
     # ------------------------------------------------------------------ propiedades que pide Playground
     @property
@@ -169,7 +175,7 @@ class NaoCarrera(mjx_env.MjxEnv):
 
     @property
     def action_size(self) -> int:
-        return len(MOTORES)
+        return len(self._motores)
 
     @property
     def mj_model(self) -> mujoco.MjModel:
@@ -213,7 +219,7 @@ class NaoCarrera(mjx_env.MjxEnv):
         rng, k_q, k_yaw, k_cmd, k_f, k_lat, k_e1, k_deriva, k_ruido = jax.random.split(rng, 9)
         q = self._q_inicial
         # postura inicial con ruido y rumbo al azar (no siempre arranca igual)
-        dq = jax.random.uniform(k_q, (13,), minval=-0.05, maxval=0.05)
+        dq = jax.random.uniform(k_q, (self.action_size,), minval=-0.05, maxval=0.05)
         q = q.at[self._qadr].add(dq)
         q = q.at[self._q_rhyp].set(q[self._q_lhyp])                    # un solo motor HipYawPitch
         yaw = jax.random.uniform(k_yaw, minval=-jp.pi, maxval=jp.pi)
@@ -230,8 +236,8 @@ class NaoCarrera(mjx_env.MjxEnv):
             "paso": 0,
             "fase": jp.array([0.0, jp.pi]),                            # pie izquierdo y derecho, desfasados media vuelta
             "dfase": 2 * jp.pi * f * self.dt,
-            "accion_ant": jp.zeros(13),
-            "acciones": jp.zeros((self._config.latencia_max + 1, 13)),  # memoria para simular el retraso
+            "accion_ant": jp.zeros(self.action_size),
+            "acciones": jp.zeros((self._config.latencia_max + 1, self.action_size)),  # memoria para simular el retraso
             "latencia": jax.random.randint(k_lat, (), 0, self._config.latencia_max + 1),
             "aire": jp.zeros(2),                                        # tiempo en el aire de cada pie
             "rumbo_ref": jp.zeros(()),                                  # rumbo deseado (relativo al de salida)
@@ -334,9 +340,9 @@ class NaoCarrera(mjx_env.MjxEnv):
         actual = jp.concatenate([
             gyro + ruido(k[0], 3, c.gyro),            # 3  giroscopio
             arriba + ruido(k[1], 3, c.gravedad),      # 3  inclinacion
-            ang + ruido(k[2], 13, c.angulos),         # 13 angulos de los motores
-            vel + ruido(k[3], 13, c.velocidades),     # 13 velocidades de los motores
-            info["accion_ant"],                       # 13 accion anterior
+            ang + ruido(k[2], self.action_size, c.angulos),   # angulos de los motores
+            vel + ruido(k[3], self.action_size, c.velocidades),  # velocidades de los motores
+            info["accion_ant"],                       # accion anterior
             info["comando"],                          # 2  comando (vx, giro)
             fase,                                     # 2  reloj de marcha
         ])
@@ -382,7 +388,7 @@ class NaoCarrera(mjx_env.MjxEnv):
             "seguir_vel": jp.exp(-(jp.square(cmd[0] - v[0]) + jp.square(v[1])) / cfg.sigma_vel),
             "seguir_giro": jp.exp(-jp.square(cmd[1] - gyro[2]) / cfg.sigma_giro),
             "tiempo_aire": jp.sum(jp.clip(aire - 0.1, max=0.2) * primer_contacto) * moverse,
-            "fase_pies": jp.exp(-jp.sum(jp.square(pies[:, 2] - rz)) / 0.01) * moverse,
+            "fase_pies": jp.exp(-jp.sum(jp.square(pies[:, 2] - rz)) / cfg.sigma_pies) * moverse,
             # --- estabilidad ---
             "vel_z": jp.square(v[2]),
             "giro_xy": jp.sum(jp.square(gyro[:2])),

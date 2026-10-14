@@ -1,0 +1,111 @@
+{
+ "generacion": "nao_v01c",
+ "hipotesis": "Corrige v01 (piernas torcidas): castigo a HipYawPitch/HipRoll lejos de la postura. Debe caminar con las piernas rectas.",
+ "semilla": 1,
+ "entorno": {
+  "action_scale": 0.3,
+  "altura_min": 0.2,
+  "altura_paso": 0.03,
+  "ctrl_dt": 0.024,
+  "empujones": {
+   "activos": false,
+   "intervalo": [
+    3.0,
+    6.0
+   ],
+   "magnitud": [
+    0.05,
+    0.3
+   ]
+  },
+  "episode_length": 1000,
+  "frecuencia_paso": [
+   1.6,
+   2.0
+  ],
+  "historia": 3,
+  "impl": "jax",
+  "inclinacion_max_deg": 45.0,
+  "latencia_max": 0,
+  "prob_quieto": 0.05,
+  "recompensa": {
+   "escalas": {
+    "caida": -100.0,
+    "cambio_accion": -0.01,
+    "energia": -0.001,
+    "fase_pies": 1.0,
+    "giro_xy": -0.15,
+    "limites": -1.0,
+    "orientacion": -2.0,
+    "pies_juntos": -5.0,
+    "pies_resbalan": -0.25,
+    "postura_cadera": -0.5,
+    "quieto": -1.0,
+    "seguir_giro": 0.75,
+    "seguir_rumbo": 1.0,
+    "seguir_vel": 1.5,
+    "tiempo_aire": 2.0,
+    "vel_z": -0.5
+   },
+   "separacion_min": 0.08,
+   "sigma_giro": 0.1,
+   "sigma_rumbo": 0.03,
+   "sigma_vel": 0.025
+  },
+  "ruido": {
+   "angulos": 0.02,
+   "gravedad": 0.05,
+   "gyro": 0.2,
+   "nivel": 1.0,
+   "velocidades": 1.0
+  },
+  "rumbo": {
+   "activo": true,
+   "deriva_gyro": 0.005,
+   "error_max": 0.5
+  },
+  "sim_dt": 0.002,
+  "vx": [
+   0.0,
+   0.3
+  ],
+  "wz": [
+   -0.4,
+   0.4
+  ]
+ },
+ "ppo": {
+  "action_repeat": 1,
+  "batch_size": 256,
+  "clipping_epsilon": 0.2,
+  "critico": [
+   256,
+   256,
+   256
+  ],
+  "discounting": 0.97,
+  "entropy_cost": 0.005,
+  "learning_rate": 0.0003,
+  "max_grad_norm": 1.0,
+  "normalize_observations": true,
+  "num_envs": 4096,
+  "num_evals": 10,
+  "num_minibatches": 32,
+  "num_resets_per_eval": 1,
+  "num_timesteps": 60000000,
+  "num_updates_per_batch": 4,
+  "politica": [
+   128,
+   128,
+   128
+  ],
+  "reward_scaling": 1.0,
+  "unroll_length": 20
+ },
+ "aleatorizar": null,
+ "escena": "/home/usuario/nao_rl/nao_assets/scene_mjx.xml",
+ "maquina": "DESKTOP-HDLPDPA",
+ "jax": "0.6.2",
+ "dispositivo": "[CudaDevice(id=0)]",
+ "fecha": "2026-10-13 00:07:20"
+}

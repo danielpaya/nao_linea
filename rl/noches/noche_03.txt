@@ -1,0 +1,6 @@
+# Noche 3 (2026-10-13): preguntas para el paper sobre nao_v04 (bitacora [29]). Sin cambios de codigo.
+# 1) misma v04 con la mitad de pasos: la mejora de v04 sobre sus hermanas, ¿es por combinar o por entrenar el doble?
+nao_v04 --semilla 0 --pasos 60000000
+# 2) otras semillas con los mismos 120 M: ¿fue suerte?
+nao_v04 --semilla 1 --pasos 120000000
+nao_v04 --semilla 2 --pasos 120000000

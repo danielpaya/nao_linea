@@ -10,7 +10,7 @@
 ![Brax](https://img.shields.io/badge/RL-Brax%20PPO-8250df)
 ![NAO](https://img.shields.io/badge/robot-NAO%20V6-34a853)
 ![GPU](https://img.shields.io/badge/GPU-RTX%205060%208%20GB-76b900)
-![estado](https://img.shields.io/badge/estado-entrenando%20v02%2Fv03-fbbc04)
+![estado](https://img.shields.io/badge/estado-v04%20robusta%20a%200.3%20m%2Fs-34a853)
 
 </div>
 
@@ -23,7 +23,7 @@
 | **Qué es** | Una política PPO propia que hace caminar al NAO V6 recto y rápido, entrenada desde cero |
 | **Dónde** | WSL2 (Ubuntu 24.04) · RTX 5060 8 GB · JAX 0.6.2 + Brax 0.14.2 + MuJoCo Playground |
 | **Escala** | 4096 NAOs simulados a la vez · ~15 600 pasos/s · 60 M de pasos ≈ 56 min |
-| **Mejor resultado hasta ahora** | **v01b:** 5 m en **16.4 s**, desvío lateral de **12 cm**, 83 % de metas en condiciones no vistas |
+| **Mejor resultado hasta ahora** | **v04:** 5 m en **17.1 s**, desvío lateral de **10 cm**, **76/80** metas fuera del nominal y la única línea que aguanta **72 ms de retraso** |
 | **Registro completo** | [`bitacora.txt`](bitacora.txt): cada decisión, error y fallo (base para el paper) |
 
 ---
@@ -59,6 +59,7 @@
 ### Acción
 
 **13 motores**: las dos piernas (HipYawPitch compartida) y los hombros, que ayudan al equilibrio.
+**15 con codos** (`codos=True`, desde v01e): + `LElbowRoll` y `RElbowRoll`.
 La política da un desplazamiento alrededor de la postura inicial.
 
 ### Observación (actor)
@@ -76,7 +77,7 @@ Solo lo que da el NAO real; **nada de velocidad lineal ni posición global**.
 | Fase de la marcha | 2 |
 | **Error de rumbo** (desde v01b) | 1 |
 
-- Total: 49 valores (50 con el rumbo), **× 3 pasos de historia**, es decir 147 → 150. Giroscopio,
+- Total: 49 valores (50 con el rumbo; 56 con codos), **× 3 pasos de historia**. Giroscopio,
   inclinación, ángulos y velocidades llevan ruido de sensor.
 - El **error de rumbo** es el rumbo deseado (integra el giro pedido) menos el rumbo estimado (integra el
   giroscopio con una deriva de 0.005 rad/s), recortado a ±0.5 rad. Así la política aprende a corregir
@@ -95,7 +96,7 @@ altura del torso y de cada pie, tiempo en el aire, fricción del piso, empujón 
 | `seguir_giro` | + | Girar lo pedido (σ = 0.1) |
 | `seguir_rumbo` | +1.0 | Mantener el rumbo de salida (σ = 0.03 rad², ~10°), desde v01b |
 | `tiempo_aire` | + | Pasos con fase de vuelo |
-| `fase_pies` | + | Que el pie suba según una curva de 3 cm ⚠️ calibrada para el G1 |
+| `fase_pies` | + | Que el pie suba según una curva de 3 cm. Tolerancia `sigma_pies` 0.01 (del G1) → **0.0005 desde v01d** |
 | `vel_z`, `giro_xy`, `orientacion` | − | Torso estable y derecho |
 | `pies_resbalan` | − | Que el pie apoyado no patine |
 | `pies_juntos` | − | Separación mínima de 8 cm (el V6 tiene ~3 cm entre piernas y se pisa) |
@@ -110,12 +111,12 @@ altura del torso y de cada pie, tiempo en el aire, fricción del piso, empujón 
 
 | Perturbación | Rango | Desde |
 |:--|:--|:--:|
-| Fricción (piso **y** pies, porque MuJoCo usa el máximo de los dos) | 0.3 – 1.2 | v02 |
-| Masa de cada pieza | ±10 % | v02 |
-| kp de cada motor | ×0.8 – 1.2 | v02 |
-| Un motor de pierna al azar "caliente" (menos torque máximo) | 50 – 100 % | v03 |
-| Retraso de la acción | 0 – 2 ciclos (0 – 48 ms) | v03 |
-| Empujones al torso | 0.05 – 0.3 m/s cada 3 – 6 s | v04 |
+| Fricción (piso **y** pies, porque MuJoCo usa el máximo de los dos) | 0.3 – 1.2 | v02d, v03m, v04 |
+| Masa de cada pieza | ±10 % | v02d, v03m, v04 |
+| kp de cada motor | ×0.8 – 1.2 | v02d, v03m, v04 |
+| Retraso de la acción | 0 – 2 ciclos (0 – 48 ms) | v02r y todas las v03 / v04 |
+| Empujones al torso | 0.05 – 0.3 m/s cada 3 – 6 s | v03e, v04 |
+| Un motor de pierna al azar "caliente" (menos torque máximo) | 50 – 100 % | implementado, sin usar todavía |
 
 ---
 
@@ -136,33 +137,66 @@ altura del torso y de cada pie, tiempo en el aire, fricción del piso, empujón 
 
 ## 📈 Generaciones
 
-Cada una cambia **una sola cosa** respecto a la anterior (`GENERACIONES` en [`rl/entrenar.py`](rl/entrenar.py)).
+Cada una cambia **una sola cosa** respecto a su base (`GENERACIONES` en [`rl/entrenar.py`](rl/entrenar.py)).
+Todas a 60 M pasos (~1 h) y semilla 0, salvo donde se indica.
 
-| Gen | Cambio | Hipótesis | Estado |
+```
+v01 ─ v01b (rumbo) ─ v01c (cadera) ─ v01d (pies) ─┬─ v01e (codos)
+                                                  ├─ v02d (mundo al azar)
+                                                  └─ v02r (retraso) ─┬─ v03c (codos)
+                                                                     ├─ v03m (mundo)
+                                                                     ├─ v03e (empujones)
+                                                                     └─ v04 (las tres, 120 M)
+```
+
+| Gen | Cambio sobre su base | Hipótesis | ¿Se cumplió? |
 |:--|:--|:--|:--|
-| v01 | Base, mundo ideal | Aprende a caminar a la velocidad pedida | ✅ 60 M |
-| **v01b** | + error de rumbo en la observación y `seguir_rumbo` | Deja de girar al arrancar | ✅ 60 M |
-| v01c | + `postura_cadera` −0.5 | Deja de torcer las piernas | ✅ 60 M |
-| v02 | + fricción, masas y kp al azar | Generaliza a pisos y motores distintos | 🔄 noche 1 (120 M) |
-| v03 | + motor débil y retraso de 0–2 ciclos | Aguanta un motor caliente y la latencia | 🔄 noche 1 (120 M) |
-| v04 | + empujones | Se recupera de choques | ⏳ |
+| v01 | Base, mundo ideal | Camina a la velocidad pedida | Sí, pero gira ~40° al arrancar |
+| v01b | + error de rumbo y `seguir_rumbo` | Deja de girar al arrancar | **Sí** (233 → 12 cm) |
+| v01c | + castigo a la cadera | Deja de torcer las piernas | A medias: más robusta, menos recta |
+| **v01d** | + tolerancia de `fase_pies` 0.01 → 0.0005 | Levanta los pies | **Sí**: `tiempo_aire` ×2, patina menos |
+| v01e | v01d + codos | Va más recta | **Sí** (desvío 20 → 10 cm), pero cae con empujones fuertes |
+| v02d | v01d + fricción, masa y kp al azar | Generaliza mejor | Poco: rumbo 8° → 5° |
+| **v02r** | v01d + retraso 0–48 ms | Aguanta la latencia | **Sí**: 72 ms de retraso 0/8 → **8/8** |
+| v03c | v02r + codos | Suma lo recto de v01e | **No**: se cae con motores blandos |
+| v03m | v02r + mundo al azar | Menos desvío en piso resbaloso | A medias: la más rápida (16.6 s) |
+| v03e | v02r + empujones | Aguanta golpes fuertes | Poco: 1/8 → 2/8 |
+| **v04** | v02r + codos + mundo + empujones, 120 M | Junta lo mejor | **Sí**: la mejor en casi todo |
 
-### Resultados (11 condiciones × 8 carreras de 5 m, sin perturbaciones de entrenamiento)
+> v04 rompe a propósito la regla de un cambio: sus tres cambios se midieron por separado en v03c/v03m/v03e.
+> Además entrenó el doble (120 M), así que **todavía no se sabe** si es mejor por combinar o por entrenar más.
+> Lo responde la noche 3 (v04 con 60 M y con semillas 1 y 2).
 
-| | v01 | **v01b** | v01c |
-|:--|:--:|:--:|:--:|
-| Tiempo en 5 m (nominal) | 19.1 s | **16.4 s** | 17.2 s |
-| Desvío lateral | 233 cm | **12 cm** | 60 cm |
-| Rumbo máximo | 45.7° | **3.6°** | 14.7° |
-| Metas en condiciones no vistas | 23/80 (29 %) | 66/80 (83 %) | **71/80 (89 %)** |
+### Resultados (11 condiciones × 8 carreras de 5 m, sin visión)
+
+| | v01 | v01b | v01d | v01e | v02r | **v04** |
+|:--|:--:|:--:|:--:|:--:|:--:|:--:|
+| Tiempo en 5 m (nominal) | 19.1 s | **16.4 s** | 17.1 s | 17.2 s | 17.2 s | 17.1 s |
+| Desvío lateral (nominal) | 233 cm | 12 cm | 20 cm | **10 cm** | 12 cm | **10 cm** |
+| Rumbo máximo (nominal) | 45.7° | 3.6° | 7.9° | 4.0° | 5.4° | **3.3°** |
+| Retraso de 72 ms | 0/8 | 0/8 | 0/8 | 0/8 | 8/8 | **8/8** |
+| Empujón de 0.45 m/s | 0/8 | 2/8 | **6/8** | 2/8 | 1/8 | 4/8 |
+| Metas fuera del nominal (de 80) | 23 | 66 | 69 | 65 | 73 | **76** |
 
 **Condiciones:** nominal · fricción 0.5 / 0.2 / 1.5 · kp al 70 % · un motor al 70 / 40 % · retraso de
-1 / 3 ciclos · empujón de 0.25 / 0.45 m/s. Cada una se marca como vista o no vista según la generación.
+1 / 3 ciclos · empujón de 0.25 / 0.45 m/s. Detalle de cada una en `rl/runs/<corrida>/evaluacion.csv` y en
+los resúmenes `rl/runs/resumen_*.md`.
 
-- **Ninguna aguanta 3 ciclos (72 ms) de retraso**: es lo que ataca v03.
-- **v02 (vista previa, semilla 9):** deja de caerse hacia los 17 M pasos; mejor recompensa 93.3 a 44.6 M.
-  A 44 M: `seguir_vel` 1437/1500 y `seguir_rumbo` 991/1000. Pero `tiempo_aire` ≈ 0: **casi no levanta los
-  pies**. El checkpoint de 44 M está en `rl/politicas/nao_v02_s9_44M/`.
+### Hallazgos del día 2 (13 de octubre)
+
+1. **El premio de los pies estaba mal calibrado.** Con la tolerancia del G1, arrastrar el pie daba el 97 % del
+   premio. Con 0.0005 da el 61 %, y el robot pasó a levantar los pies el doble y a patinar menos.
+2. **Entrenar con retraso es lo que más vale para el robot real.** Con 0–48 ms al azar, la política aguanta
+   72 ms sin haberlos visto, no pierde velocidad con 24 ms y además va más recta.
+3. **Los codos ayudan o perjudican según la base.** Sobre v01d corrigieron el giro hacia un lado (v01e); sobre
+   v02r hicieron caer al robot con motores blandos (v03c). Solos no son una mejora segura.
+4. **La combinación (v04) funciona mejor que cada cambio por separado**, aunque falta separar el efecto de
+   entrenar el doble.
+5. **La recompensa del entrenamiento no predice lo que importa en la carrera.** v01e no mejoraba en el
+   entrenamiento y en la evaluación iba la mitad de desviada: el desvío lateral no está en la recompensa.
+   Siempre hay que evaluar.
+6. **El tiempo no ha bajado de ~17 s** porque el comando máximo sigue en 0.3 m/s. Eso es la etapa siguiente.
+7. **La debilidad que queda:** empujones fuertes (máximo 4/8) y sensibilidad a motores blandos.
 
 ---
 
@@ -177,9 +211,13 @@ Cada una cambia **una sola cosa** respecto a la anterior (`GENERACIONES` en [`rl
 | Scripts pegados con heredoc salían truncados | Límite de la terminal | Copiar los scripts desde el repo |
 | v01 giraba ~40° al arrancar y torcía la pierna | No tenía ninguna referencia de rumbo; la cadera estaba libre | v01b (rumbo) y v01c (castigo de cadera). Se descartó *reward hacking*: `seguir_vel` = 914 |
 | `rsync` a `/mnt/c` fallaba (chgrp, mkstemp, tiempos) | El sistema de archivos de Windows no acepta esos atributos | `cp -r`, o enlaces simbólicos de `~/nao_rl/runs` a la carpeta de Windows |
-| El log de la cola nocturna llega con retraso | stdout de Python con búfer | Pendiente: `PYTHONUNBUFFERED=1` en `cola_noche.sh` |
+| El log de la cola nocturna llega con retraso | stdout de Python con búfer | `PYTHONUNBUFFERED=1` en `cola_noche.sh` |
 | La GPU marca 0 % los primeros minutos | Compilación de XLA (3.5 – 6 min por corrida) | Es normal; se ve en `estado.txt` y en el log |
-| v02 casi no levanta los pies | `fase_pies` calibrado para el G1, no para el NAO | Pendiente (posible v01d) |
+| Casi no levantaba los pies | `fase_pies` con la tolerancia del G1: arrastrar daba el 97 % del premio | v01d: tolerancia 0.0005 |
+| La noche 1 se cortó a las 00:50 | WSL se apagó solo (sin `.wslconfig`); tmux murió con él | Cola reanudable + `vigilante.sh` desde una tarea de Windows |
+| La v04 de la noche 2 arrancó con la configuración vieja | Dos generaciones con el mismo nombre en un `dict`: gana la última | La vieja se renombró a `nao_v04_antigua`; se revisan nombres repetidos antes de enviar |
+| v03c y v03m quedaron sin evaluar | `--parar` borra la hora de inicio de la cola y el resumen solo mira las últimas horas | `resumen_manana.py --horas 6` (mejora pendiente) |
+| Un error de suma en la bitácora (v01d 77/80) | Error del asistente | Corregido con una entrada nueva (son 69/80) |
 
 ---
 
@@ -192,8 +230,11 @@ Cada una cambia **una sola cosa** respecto a la anterior (`GENERACIONES` en [`rl
 | Cómo | `entrenar.py` en tmux | `cola_noche.sh noches/noche_NN.txt` en tmux |
 | Al terminar | `evaluar.py` y `ver_politica.py` | `resumen_manana.py` evalúa lo que falte y escribe `runs/resumen_<fecha>.md` |
 
-La cola sigue aunque una corrida falle, y el resultado de cada corrida queda en `estado.txt`
-(corriendo / terminado).
+- La cola sigue aunque una corrida falle, y el resultado de cada corrida queda en `estado.txt`
+  (corriendo / terminado / cortado).
+- **Reanudable:** si se relanza la misma lista, salta las corridas ya terminadas.
+- **Vigilante:** una tarea de Windows mantiene vivo `rl/vigilante.sh`, que relanza la cola si WSL o la cola se
+  mueren. Para detenerla a propósito: `bash cola_noche.sh --parar`.
 
 ---
 
@@ -207,11 +248,13 @@ La cola sigue aunque una corrida falle, y el resultado de cada corrida queda en 
 | `rl/entrenar.py` | Entrenamiento PPO por generación; guarda config, progreso y checkpoints |
 | `rl/evaluar.py` | Evaluación de robustez en la GPU (vmap + scan) → `evaluacion.csv` |
 | `rl/ver_politica.py` | 5 carreras de 5 m con video y rumbo a los 2 s |
-| `rl/cola_noche.sh` | Cola nocturna de entrenamientos |
+| `rl/cola_noche.sh` | Cola de entrenamientos (reanudable, `--parar`) |
+| `rl/vigilante.sh` | Relanza la cola si se muere; lo arranca el Programador de tareas de Windows |
+| `rl/logs/` | Logs de cada cola y del vigilante |
 | `rl/resumen_manana.py` | Evalúa lo pendiente y escribe el resumen de la noche |
 | `rl/noches/` | Listas de corridas de cada noche |
 | `rl/runs/` | Solo los archivos livianos de cada corrida: `config.json`, `progreso.csv`, `evaluacion.csv` y resúmenes |
-| `rl/politicas/` | Políticas elegidas: `nao_v01b_s0`, `nao_v01c_s0`, `nao_v02_s9_44M` |
+| `rl/politicas/` | Políticas elegidas: `nao_v01b_s0`, `nao_v01c_s0`, `nao_v01d_s0`, `nao_v01e_s0`, `nao_v02r_s0`, **`nao_v04_s0`** y `nao_v02_s9_44M` |
 | [`bitacora.txt`](bitacora.txt) | Bitácora de todo el proceso |
 
 ---
@@ -225,20 +268,24 @@ PY=~/nao_rl/mujoco_playground/.venv/bin/python
 cd ~/nao_rl
 
 $PY revisar_nao_mjx.py                                   # revisar el modelo en MJX
-$PY entrenar.py nao_v01b --pasos 60000000 --semilla 0    # una generacion (~1 h)
-$PY entrenar.py nao_v02 --prueba                         # prueba corta del pipeline
-$PY evaluar.py runs/nao_v01b_s0_<fecha>                  # 11 condiciones x 8 carreras
-$PY ver_politica.py runs/nao_v01b_s0_<fecha>             # video de 5 carreras
-bash cola_noche.sh noches/noche_01.txt                   # cola nocturna + resumen
+$PY entrenar.py nao_v04 --prueba                         # prueba corta del pipeline (~5 min)
+$PY entrenar.py nao_v04 --pasos 120000000 --semilla 0    # la mejor generacion (~1 h 40)
+$PY evaluar.py runs/nao_v04_s0_<fecha>                   # 11 condiciones x 8 carreras (~12 min)
+$PY ver_politica.py runs/nao_v04_s0_<fecha>              # video de 5 carreras
+bash cola_noche.sh noches/noche_02.txt                   # cola + evaluacion + resumen
+bash cola_noche.sh --parar                               # detenerla sin que el vigilante la relance
 ```
 
 ---
 
 ## 🔜 Siguientes pasos
 
-1. Revisar la noche 1 (v01b s1, v01c s1, v02, v03) y evaluar el checkpoint de 44 M de v02.
-2. Arreglar que no levante los pies: recalibrar `fase_pies` / `altura_paso` para el NAO (posible v01d).
-3. v04 con empujones.
-4. Subir la velocidad pedida por encima de 0.3 m/s.
-5. Reemplazar el error de rumbo integrado del giroscopio por una medición externa con ruido, retraso y 10 Hz.
-6. Exportar la política a numpy para la inferencia a bordo (Python 2.7, sin torch).
+1. **Noche 3:** v04 con 60 M y con semillas 1 y 2 (¿combinar o entrenar más?, ¿fue suerte?).
+2. **Etapa de velocidad** sobre v04, para bajar de 17 s hacia ~11 s:
+   - motores realistas (límite de velocidad por motor y caída de torque al girar rápido);
+   - arrancar cada etapa desde una política ya entrenada;
+   - subir el comando 0.35 → 0.4 → 0.5 m/s.
+3. **Visión simulada:** reemplazar el error de rumbo del giroscopio por d y ψ con el ruido medido de la cámara
+   (σ 1.6 cm / 1.2°), a 10 Hz y con retraso.
+4. Empujones más fuertes en el entrenamiento (la debilidad que queda).
+5. Exportar la política a numpy para la inferencia a bordo (Python 2.7, sin torch).
