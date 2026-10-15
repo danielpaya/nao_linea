@@ -17,6 +17,7 @@ runs/<generacion>_s<semilla>_<fecha>/:
 import argparse
 import csv
 import functools
+import glob
 import json
 import os
 import pickle
@@ -78,6 +79,30 @@ GENERACIONES = {
                               "medidos por separado en esas corridas). Candidata final de la etapa a 0.3 m/s.",
                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, **{"empujones.activos": True}),
                     aleatorizar=dict(MUNDO)),
+    # --- etapa de velocidad (2026-10-14): base nao_v04; cada una arranca desde la anterior con --desde ---
+    "nao_v05a": dict(hipotesis="v04 + motores reales (el torque cae con la velocidad del motor, tope 4.5-7 rad/s; "
+                               "brazos con su torque real): sigue caminando a 0.3 m/s con motores que el NAO si tiene.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  **{"empujones.activos": True}), aleatorizar=dict(MUNDO)),
+    "nao_v05b": dict(hipotesis="v05a + comando hasta 0.4 m/s: 5 m en ~13 s sin perder robustez.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.4], **{"empujones.activos": True}), aleatorizar=dict(MUNDO)),
+    "nao_v05c": dict(hipotesis="v05b + comando hasta 0.5 m/s: 5 m en ~11 s sin perder robustez.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.5], **{"empujones.activos": True}), aleatorizar=dict(MUNDO)),
+    "nao_v05d": dict(hipotesis="v05c + comando hasta 0.6 m/s: mide el techo de velocidad con motores reales "
+                               "(no es para la carrera: da margen para correr a 0.5).",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.6], **{"empujones.activos": True}), aleatorizar=dict(MUNDO)),
+    # --- vision simulada (2026-10-14): base nao_v05c (0.5 m/s, motores reales) ---
+    "nao_v06": dict(hipotesis="v05c + vision simulada (psi y d de la camara con ruido 1.6 cm / 1.2 grados, 10 Hz, "
+                              "1 cuadro de retraso, 5 % de cuadros perdidos) en vez del rumbo del giroscopio, salida "
+                              "chueca (+-10 cm, +-8 grados) y premio por ir por el centro (seguir_carril): se centra "
+                              "sola y no se sale del carril, sin perder los ~11 s.",
+                    entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                 vx=[0.0, 0.5], **{"empujones.activos": True, "vision.activa": True,
+                                                   "recompensa.escalas.seguir_carril": 1.0}),
+                    aleatorizar=dict(MUNDO)),
     "nao_v02": dict(hipotesis="+ friccion, masas y kp al azar: generaliza a pisos y motores distintos.",
                     entorno=dict(RUMBO, **CADERA), aleatorizar=dict(MUNDO)),
     "nao_v03": dict(hipotesis="+ motor debil y retraso de 0-2 ciclos: aguanta fallas que v02 no aguanta.",
@@ -90,6 +115,41 @@ GENERACIONES = {
 }
 
 
+def buscar_desde(desde):
+    """Carpeta de la politica de partida: la ruta dada o la ultima corrida terminada de esa generacion."""
+    if os.path.isdir(desde):
+        return desde.rstrip("/")
+    for ruta in (os.path.join(AQUI, desde), os.path.join(AQUI, "runs", desde)):
+        if os.path.isdir(ruta):
+            return ruta.rstrip("/")
+    candidatas = []
+    for d in glob.glob(os.path.join(AQUI, "runs", desde + "_s*_*")):
+        try:
+            if open(os.path.join(d, "estado.txt")).read().strip() == "terminado":
+                candidatas.append(d)
+        except OSError:
+            pass
+    if not candidatas:
+        sys.exit("No encuentro una corrida terminada para --desde %s" % desde)
+    return max(candidatas, key=os.path.getmtime)
+
+
+def adaptar_desde(params, desde, env):
+    """Si la politica de partida ve otra observacion (p. ej. v05c -> v06 con vision), trasplanta sus pesos."""
+    from ml_collections import config_dict
+    viejo = json.load(open(os.path.join(desde, "config.json")))
+    cfg_vieja = nc.default_config()
+    cfg_vieja.update(config_dict.ConfigDict(viejo["entorno"]))
+    etq_vieja = nc.NaoCarrera(ESCENA, cfg_vieja).etiquetas()
+    etq_nueva = env.etiquetas()
+    if etq_vieja == etq_nueva:
+        return params
+    nuevas = [e for e in etq_nueva[1] if e not in etq_vieja[1]]
+    print("Trasplante de pesos: %d -> %d entradas del actor, %d -> %d del critico; nuevas: %s"
+          % (len(etq_vieja[0]), len(etq_nueva[0]), len(etq_vieja[1]), len(etq_nueva[1]), ", ".join(nuevas)))
+    return nc.trasplantar(params, etq_vieja, etq_nueva)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("generacion", choices=sorted(GENERACIONES))
@@ -97,6 +157,9 @@ def main():
     ap.add_argument("--envs", type=int, default=None, help="robots en paralelo (por defecto 4096)")
     ap.add_argument("--semilla", type=int, default=0)
     ap.add_argument("--prueba", action="store_true", help="corrida minima para comprobar que todo funciona")
+    ap.add_argument("--desde", default=None,
+                    help="arrancar desde una politica ya entrenada: carpeta runs/... o nombre de generacion "
+                         "(usa su ultima corrida terminada). Debe tener la misma observacion y accion.")
     a = ap.parse_args()
 
     gen = GENERACIONES[a.generacion]
@@ -111,8 +174,17 @@ def main():
                        unroll_length=10)
         cfg_env.episode_length = 100
 
+    desde, params_desde = None, None
+    if a.desde:
+        desde = buscar_desde(a.desde)
+        with open(os.path.join(desde, "politica.pkl"), "rb") as f:
+            params_desde = pickle.load(f)              # (normalizador, politica, valor), como lo guarda guardar()
+        print("Arranca desde", desde)
+
     env = nc.NaoCarrera(ESCENA, cfg_env, config_overrides=gen["entorno"])
     eval_env = nc.NaoCarrera(ESCENA, cfg_env, config_overrides=gen["entorno"])
+    if params_desde is not None:
+        params_desde = adaptar_desde(params_desde, desde, env)
     m = env.mj_model
 
     aleat = None
@@ -127,7 +199,7 @@ def main():
     info = {
         "generacion": a.generacion, "hipotesis": gen["hipotesis"], "semilla": a.semilla,
         "entorno": env._config.to_dict(), "ppo": cfg_ppo.to_dict(), "aleatorizar": gen["aleatorizar"],
-        "escena": ESCENA, "maquina": platform.node(), "jax": jax.__version__, "dispositivo": str(jax.devices()),
+        "escena": ESCENA, "desde": desde, "maquina": platform.node(), "jax": jax.__version__, "dispositivo": str(jax.devices()),
         "fecha": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     json.dump(info, open(os.path.join(carpeta, "config.json"), "w"), indent=1, default=str)
@@ -164,7 +236,7 @@ def main():
     entrenar = functools.partial(ppo.train, policy_params_fn=guardar, **params_ppo, network_factory=red,
                                  randomization_fn=aleat,
                                  wrap_env_fn=wrapper.wrap_for_brax_training, seed=a.semilla,
-                                 episode_length=cfg_env.episode_length)
+                                 episode_length=cfg_env.episode_length, restore_params=params_desde)
     _, params, _ = entrenar(environment=env, eval_env=eval_env, progress_fn=progreso)
     with open(os.path.join(carpeta, "politica.pkl"), "wb") as f:
         pickle.dump(jax.device_get(params), f)

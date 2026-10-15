@@ -34,6 +34,20 @@ MOTORES = ("LHipYawPitch",
            "LShoulderPitch", "RShoulderPitch")
 MOTORES_PIERNA = MOTORES[:11]
 CODOS = ("LElbowRoll", "RElbowRoll")      # desde nao_v01e (config codos=True): doblar/estirar cada codo
+# Motores reales del NAO (desde nao_v05a, config motores_reales=True). Fuente: tabla de motores de NAO de United
+# Robotics / Aldebaran (motor de pierna: 8700 rpm sin carga; brazo: 10700 rpm; reducciones por articulacion).
+# vel_max = rpm sin carga / reduccion (rad/s): a esa velocidad el motor ya no da fuerza (contra-FEM).
+# par_max = torque maximo en la articulacion (N m); en piernas manda el ±5 N m del modelo (el bloqueo real, ~8-13 N m,
+# no se usa); en brazos el bloqueo real (≈2.2-2.5 N m) es menor que el ±5 / ±3 del modelo.
+#   piernas, reduccion 201.3 (HipYawPitch, HipRoll, AnkleRoll): 8700/201.3 rpm = 4.53 rad/s
+#   piernas, reduccion 130.85 (HipPitch, KneePitch, AnklePitch): 8700/130.85 rpm = 6.96 rad/s
+#   ShoulderPitch, reduccion 150.27: 10700/150.27 rpm = 7.46 rad/s, 14.3 mN m x 150.27 = 2.15 N m
+#   ElbowRoll, reduccion 173.22: 10700/173.22 rpm = 6.47 rad/s, 14.3 mN m x 173.22 = 2.48 N m
+VEL_MAX = {"LHipYawPitch": 4.53, "LHipRoll": 4.53, "RHipRoll": 4.53, "LAnkleRoll": 4.53, "RAnkleRoll": 4.53,
+           "LHipPitch": 6.96, "RHipPitch": 6.96, "LKneePitch": 6.96, "RKneePitch": 6.96,
+           "LAnklePitch": 6.96, "RAnklePitch": 6.96,
+           "LShoulderPitch": 7.46, "RShoulderPitch": 7.46, "LElbowRoll": 6.47, "RElbowRoll": 6.47}
+PAR_MAX = {"LShoulderPitch": 2.15, "RShoulderPitch": 2.15, "LElbowRoll": 2.48, "RElbowRoll": 2.48}   # el resto: el del modelo
 PIES = ("left_foot", "right_foot")          # sites en la planta de cada pie
 
 
@@ -44,6 +58,8 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,           # 1000 x 24 ms = 24 s
         impl="jax",
         action_scale=0.3,              # rad: objetivo = postura_base + accion * escala
+        motores_reales=False,          # desde nao_v05a: el torque cae con la velocidad del motor (tope vel_max) y brazos
+                                       # con su torque real (VEL_MAX / PAR_MAX)
         codos=False,                   # desde nao_v01e: la politica tambien mueve LElbowRoll y RElbowRoll (15 motores)
         historia=3,                    # cuantas observaciones pasadas ve el actor (compensa no ver la velocidad)
         # --- comando ---
@@ -57,6 +73,22 @@ def default_config() -> config_dict.ConfigDict:
             activo=False,
             deriva_gyro=0.005,         # rad/s de sesgo del giroscopio al integrar (al azar por episodio)
             error_max=0.5,             # rad: el error que ve la politica se recorta a +-error_max
+        ),
+        # --- vision simulada (desde nao_v06) ---
+        # Reemplaza el error de rumbo del giroscopio por lo que mide la camara respecto a las lineas del carril:
+        # psi (angulo con el carril) y d (distancia lateral al centro; + = a la izquierda). El carril es virtual: su
+        # direccion es el rumbo deseado (integra el giro pedido) y d integra el movimiento lateral respecto a ella.
+        # Ruido medido con el estimador real en simulacion (sigma 1.6 cm / 1.2 grados), 10 Hz, 1 cuadro de retraso,
+        # cuadros perdidos, y salida chueca (+-10 cm, +-8 grados), como cuando el capitan coloca el robot.
+        vision=config_dict.create(
+            activa=False,
+            sigma_d=0.016,             # m
+            sigma_psi=0.021,           # rad (1.2 grados)
+            periodo=4,                 # pasos de 24 ms entre cuadros (~10 Hz)
+            prob_perdida=0.05,         # cuadros sin medicion (se mantiene la anterior)
+            d0_max=0.10,               # m: salida corrida del centro
+            psi0_max=0.14,             # rad (8 grados): salida chueca
+            d_max=0.5,                 # m: recorte de lo que ve la politica
         ),
         frecuencia_paso=[1.6, 2.0],    # Hz del ciclo de marcha (izq + der)
         altura_paso=0.03,              # m que deberia subir el pie en el aire
@@ -81,6 +113,7 @@ def default_config() -> config_dict.ConfigDict:
             sigma_giro=0.1,            # (rad/s)^2
             separacion_min=0.08,       # m entre pies (el V6 tiene ~3 cm entre piernas: se pisa)
             sigma_rumbo=0.03,          # rad^2 (~10 grados)
+            sigma_carril=0.01,         # m^2 (~10 cm): seguir_carril, desde nao_v06
             sigma_pies=0.01,           # m^2: tolerancia de fase_pies. 0.01 viene del G1 y es muy laxa para pasos de
                                        # 3 cm (arrastrar el pie da 97 % del premio). nao_v01d usa 0.0005 (61 %).
             escalas=config_dict.create(
@@ -98,6 +131,7 @@ def default_config() -> config_dict.ConfigDict:
                 limites=-1.0,
                 quieto=-1.0,
                 seguir_rumbo=0.0,      # desde nao_v01b (se activa junto con rumbo.activo)
+                seguir_carril=0.0,     # desde nao_v06: premio por ir por el centro del carril (d real)
                 postura_cadera=0.0,    # desde nao_v01c: HipYawPitch y HipRoll cerca de la postura base
                 caida=-100.0,
             ),
@@ -152,6 +186,8 @@ class NaoCarrera(mjx_env.MjxEnv):
         self._qadr = np.array(m.jnt_qposadr[jnt])
         self._vadr = np.array(m.jnt_dofadr[jnt])
         self._postura = jp.array(home.qpos[self._qadr])            # postura base de los motores que controla
+        self._vel_max = jp.array([VEL_MAX[nombre] for nombre in self._motores])
+        self._par_max = jp.array([PAR_MAX.get(nombre, 1e6) for nombre in self._motores])
         self._lo = jp.array(m.jnt_range[jnt, 0])
         self._hi = jp.array(m.jnt_range[jnt, 1])
         self._lo_suave = self._postura + 0.95 * (self._lo - self._postura)
@@ -164,7 +200,9 @@ class NaoCarrera(mjx_env.MjxEnv):
         self._q_rhyp = int(rhyp.qposadr[0])
         self._q_lhyp = int(m.joint("LHipYawPitch").qposadr[0])
         self._n_obs = 3 + 3 + n + n + n + 2 + 2                      # 49 por paso (55 con codos)
-        if self._config.rumbo.activo:
+        if self._config.vision.activa:
+            self._n_obs += 2                                           # + psi y d de la camara
+        elif self._config.rumbo.activo:
             self._n_obs += 1                                           # + error de rumbo
         self._i_cadera = np.array([MOTORES.index(c) for c in ("LHipYawPitch", "LHipRoll", "RHipRoll")])
 
@@ -198,8 +236,40 @@ class NaoCarrera(mjx_env.MjxEnv):
         return (data.xmat[self._torso] @ data.qvel[3:6])[2]
 
     def _error_rumbo(self, info):
-        e = jp.arctan2(jp.sin(info["rumbo_ref"] - info["rumbo_est"]), jp.cos(info["rumbo_ref"] - info["rumbo_est"]))
+        """Sin vision: rumbo deseado - rumbo estimado con el giroscopio. Con vision: psi real (para la recompensa)."""
+        est = info["rumbo_real"] if self._config.vision.activa else info["rumbo_est"]
+        e = jp.arctan2(jp.sin(info["rumbo_ref"] - est), jp.cos(info["rumbo_ref"] - est))
         return e
+
+    def _yaw(self, data):
+        R = data.xmat[self._torso]
+        return jp.arctan2(R[1, 0], R[0, 0])
+
+    def _medir_carril(self, info, rng):
+        """Lo que daria la camara en este instante: (psi, d) reales + ruido."""
+        v = self._config.vision
+        k1, k2 = jax.random.split(rng)
+        psi = self._error_rumbo(info) + v.sigma_psi * jax.random.normal(k1)
+        d = info["carril_d"] + v.sigma_d * jax.random.normal(k2)
+        return jp.array([psi, d])
+
+    def etiquetas(self):
+        """Nombre de cada entrada de la observacion (actor, critico). Sirve para trasplantar pesos entre versiones."""
+        m = self._motores
+        blk = (["gyro%d" % i for i in range(3)] + ["arriba%d" % i for i in range(3)] + ["ang_" + n for n in m]
+               + ["vel_" + n for n in m] + ["acc_" + n for n in m] + ["cmd_vx", "cmd_wz", "fase_cos", "fase_sin"])
+        if self._config.vision.activa:
+            blk += ["vis_psi", "vis_d"]
+        elif self._config.rumbo.activo:
+            blk += ["rumbo"]
+        estado = ["h%d_%s" % (h, e) for h in range(self._config.historia) for e in blk]
+        extras = (["p_gyro%d" % i for i in range(3)] + ["p_arriba%d" % i for i in range(3)]
+                  + ["p_ang_" + n for n in m] + ["p_vel_" + n for n in m] + ["p_vlin%d" % i for i in range(3)]
+                  + ["p_altura", "p_pie_z0", "p_pie_z1", "p_aire0", "p_aire1", "p_friccion", "p_empujon0",
+                     "p_empujon1", "p_latencia"])
+        if self._config.vision.activa:
+            extras += ["p_carril_d", "p_carril_psi"]
+        return estado, estado + extras
 
     def _vel_local(self, data):
         """Velocidad lineal en el marco del torso. SOLO para recompensa y critico: el NAO no la mide."""
@@ -229,6 +299,10 @@ class NaoCarrera(mjx_env.MjxEnv):
         data = mjx.forward(self.mjx_model, data)
 
         f = jax.random.uniform(k_f, minval=self._config.frecuencia_paso[0], maxval=self._config.frecuencia_paso[1])
+        v = self._config.vision
+        k_d0, k_psi0, k_vis = jax.random.split(jax.random.fold_in(k_yaw, 7), 3)
+        d0 = jax.random.uniform(k_d0, minval=-v.d0_max, maxval=v.d0_max) * v.activa
+        psi0 = jax.random.uniform(k_psi0, minval=-v.psi0_max, maxval=v.psi0_max) * v.activa
         cfg_e = self._config.empujones
         info = {
             "rng": rng,
@@ -240,7 +314,13 @@ class NaoCarrera(mjx_env.MjxEnv):
             "acciones": jp.zeros((self._config.latencia_max + 1, self.action_size)),  # memoria para simular el retraso
             "latencia": jax.random.randint(k_lat, (), 0, self._config.latencia_max + 1),
             "aire": jp.zeros(2),                                        # tiempo en el aire de cada pie
-            "rumbo_ref": jp.zeros(()),                                  # rumbo deseado (relativo al de salida)
+            "rumbo_ref": psi0 * jp.ones(()),                            # rumbo deseado (relativo al de salida)
+            "yaw0": yaw * jp.ones(()),                                  # rumbo de salida en el mundo
+            "rumbo_real": jp.zeros(()),                                 # rumbo real relativo al de salida
+            "carril_d": d0 * jp.ones(()),                               # distancia real al centro del carril
+            "vis_cuenta": jp.zeros((), jp.int32),                       # pasos hasta el proximo cuadro
+            "vis_muestra": jp.array([psi0, d0]),                        # ultimo cuadro tomado (se publica despues)
+            "vis_obs": jp.array([psi0, d0]),                            # lo que ve la politica
             "rumbo_est": jp.zeros(()),                                  # rumbo estimado integrando el giroscopio
             "deriva": jax.random.uniform(k_deriva, minval=-self._config.rumbo.deriva_gyro,
                                          maxval=self._config.rumbo.deriva_gyro),
@@ -278,7 +358,7 @@ class NaoCarrera(mjx_env.MjxEnv):
         # 3) objetivo de los motores: postura base + correccion; el resto de motores queda en 'home'
         objetivo = jp.clip(self._postura + aplicada * self._config.action_scale, self._lo, self._hi)
         ctrl = self._ctrl_home.at[self._act].set(objetivo)
-        data = mjx_env.step(self.mjx_model, data, ctrl, self.n_substeps)
+        data = self._fisica(data, ctrl)
 
         # 4) pies: contacto (planta a menos de 1 cm del piso) y tiempo en el aire
         pies = data.site_xpos[self._pies]
@@ -290,6 +370,8 @@ class NaoCarrera(mjx_env.MjxEnv):
         # rumbo: el deseado integra el giro pedido; el estimado integra el giroscopio (con deriva)
         info["rumbo_ref"] = info["rumbo_ref"] + info["comando"][1] * self.dt
         info["rumbo_est"] = info["rumbo_est"] + (self._gyro_z_mundo(data) + info["deriva"]) * self.dt
+        if self._config.vision.activa:
+            info = self._paso_vision(data, info, k_cmd)
 
         caida = self._caida(data)
         r = self._recompensas(data, action, info, caida, contacto, primer_contacto, aire, vel_pies)
@@ -316,6 +398,40 @@ class NaoCarrera(mjx_env.MjxEnv):
 
         obs = self._obs(data, info, state.obs["state"], k_ruido)
         return state.replace(data=data, obs=obs, reward=recompensa, done=caida.astype(jp.float32))
+
+    def _paso_vision(self, data, info, rng):
+        """Carril virtual y camara: d integra la velocidad lateral respecto al rumbo deseado; cada 'periodo' pasos
+        se publica el cuadro anterior (1 cuadro de retraso) y se toma uno nuevo; a veces el cuadro se pierde."""
+        v = self._config.vision
+        info["rumbo_real"] = self._yaw(data) - info["yaw0"]
+        ref = info["yaw0"] + info["rumbo_ref"]
+        normal = jp.array([-jp.sin(ref), jp.cos(ref)])
+        info["carril_d"] = info["carril_d"] + jp.dot(data.qvel[0:2], normal) * self.dt
+        k_med, k_perd = jax.random.split(jax.random.fold_in(rng, 11))
+        toca = info["vis_cuenta"] <= 0
+        perdido = jax.random.bernoulli(k_perd, v.prob_perdida)
+        info["vis_obs"] = jp.where(toca & ~perdido, info["vis_muestra"], info["vis_obs"])
+        info["vis_muestra"] = jp.where(toca, self._medir_carril(info, k_med), info["vis_muestra"])
+        info["vis_cuenta"] = jp.where(toca, v.periodo - 1, info["vis_cuenta"] - 1)
+        return info
+
+    # ------------------------------------------------------------------ fisica
+    def _fisica(self, data, ctrl):
+        """n_substeps pasos de MuJoCo. Con motores_reales, antes de cada paso el limite de torque de cada motor
+        controlado baja con su velocidad: tope = par_max * (1 - |w| / vel_max) (recta de un motor DC)."""
+        if not self._config.motores_reales:
+            return mjx_env.step(self.mjx_model, data, ctrl, self.n_substeps)
+        base = self.mjx_model.actuator_forcerange               # ya trae el motor debil si se aleatorizo
+        tope = jp.minimum(base[self._act, 1], self._par_max)
+
+        def sub(d, _):
+            w = d.qvel[self._vadr]
+            lim = tope * jp.clip(1.0 - jp.abs(w) / self._vel_max, 0.0, 1.0)
+            fr = base.at[self._act, 0].set(-lim).at[self._act, 1].set(lim)
+            m = self.mjx_model.tree_replace({"actuator_forcerange": fr})
+            return mjx.step(m, d.replace(ctrl=ctrl)), None
+
+        return jax.lax.scan(sub, data, (), self.n_substeps)[0]
 
     # ------------------------------------------------------------------ caida
     def _caida(self, data):
@@ -346,7 +462,11 @@ class NaoCarrera(mjx_env.MjxEnv):
             info["comando"],                          # 2  comando (vx, giro)
             fase,                                     # 2  reloj de marcha
         ])
-        if self._config.rumbo.activo:                 # 1  error de rumbo (en la carrera: el psi de la vision)
+        if self._config.vision.activa:                # 2  psi y d de la camara (con ruido, 10 Hz, retraso)
+            m, dm = self._config.rumbo.error_max, self._config.vision.d_max
+            actual = jp.concatenate([actual, jp.array([jp.clip(info["vis_obs"][0], -m, m),
+                                                        jp.clip(info["vis_obs"][1], -dm, dm)])])
+        elif self._config.rumbo.activo:               # 1  error de rumbo (en la carrera: el psi de la vision)
             m = self._config.rumbo.error_max
             actual = jp.concatenate([actual, jp.clip(self._error_rumbo(info), -m, m)[None]])
         # historia: las ultimas N observaciones (la mas nueva primero)
@@ -365,6 +485,8 @@ class NaoCarrera(mjx_env.MjxEnv):
             info["empujon"],
             info["latencia"][None].astype(jp.float32),
         ])
+        if self._config.vision.activa:
+            privilegiado = jp.concatenate([privilegiado, jp.array([info["carril_d"], self._error_rumbo(info)])])
         return {"state": estado, "privileged_state": privilegiado}
 
     # ------------------------------------------------------------------ recompensa
@@ -401,6 +523,7 @@ class NaoCarrera(mjx_env.MjxEnv):
             "limites": jp.sum(jp.clip(self._lo_suave - q, min=0.0) + jp.clip(q - self._hi_suave, min=0.0)),
             "quieto": jp.sum(jp.abs(q - self._postura)) * ~moverse,
             "seguir_rumbo": jp.exp(-jp.square(self._error_rumbo(info)) / cfg.sigma_rumbo),
+            "seguir_carril": jp.exp(-jp.square(info["carril_d"]) / cfg.sigma_carril),
             "postura_cadera": jp.sum(jp.abs(q[self._i_cadera] - self._postura[self._i_cadera])),
             "caida": caida.astype(jp.float32),
         }
@@ -440,3 +563,61 @@ def aleatorizar(model: mjx.Model, rng: jax.Array, friccion=(0.3, 1.2), masa=(0.9
                "actuator_biasprm": biasprm, "actuator_forcerange": forcerange}
     in_axes = in_axes.tree_replace({k: 0 for k in cambios})
     return model.tree_replace(cambios), in_axes
+
+
+def salida_recta(info):
+    """Para evaluar: despues de poner el robot mirando a lo largo de la pista (yaw 0), el carril virtual coincide con
+    la pista y el robot sale centrado y derecho (sin la salida chueca del entrenamiento)."""
+    cero = jp.zeros_like(info["rumbo_ref"])
+    return {"yaw0": cero, "rumbo_ref": cero, "rumbo_real": cero, "carril_d": cero,
+            "vis_muestra": jp.zeros_like(info["vis_muestra"]), "vis_obs": jp.zeros_like(info["vis_obs"])}
+
+
+# ---------------------------------------------------------------------- trasplante de pesos entre versiones
+ALIAS = {"vis_psi": "rumbo"}       # psi de la camara ocupa el lugar del error de rumbo del giroscopio
+
+
+def trasplantar(params, etq_vieja, etq_nueva):
+    """Adapta (normalizador, politica, valor) a una observacion con otras entradas. Cada entrada nueva copia la fila
+    de pesos y la estadistica de la entrada vieja del mismo nombre (o de su alias); las que no existian empiezan con
+    peso 0 (al principio no cambian nada) y estadistica media 0 / desviacion 1."""
+    import numpy as onp
+    norm, pol, val = params
+
+    def mapa(vieja, nueva):
+        idx = {e: i for i, e in enumerate(vieja)}
+        out = []
+        for e in nueva:
+            base = e
+            for a, b in ALIAS.items():
+                if e.endswith("_" + a) or e == a:
+                    base = e[: len(e) - len(a)] + b
+            out.append(idx.get(e, idx.get(base, -1)))
+        return onp.array(out)
+
+    mapas = {"state": mapa(etq_vieja[0], etq_nueva[0]), "privileged_state": mapa(etq_vieja[1], etq_nueva[1])}
+    if hasattr(norm.count, "hi"):               # contador de 64 bits partido en dos (brax)
+        cuenta = float(onp.asarray(norm.count.hi, dtype=onp.float64) * 2.0 ** 32
+                       + onp.asarray(norm.count.lo, dtype=onp.float64))
+    else:
+        cuenta = float(onp.asarray(norm.count, dtype=onp.float64))
+
+    def pasar(arr, m, relleno):
+        arr = onp.asarray(arr)
+        nuevo = onp.full((len(m),) + arr.shape[1:], relleno, dtype=arr.dtype)
+        ok = m >= 0
+        nuevo[ok] = arr[m[ok]]
+        return nuevo
+
+    norm = norm.replace(
+        mean={k: pasar(norm.mean[k], mapas[k], 0.0) for k in mapas},
+        std={k: pasar(norm.std[k], mapas[k], 1.0) for k in mapas},
+        summed_variance={k: pasar(norm.summed_variance[k], mapas[k], cuenta) for k in mapas})
+
+    def capa0(red, m):
+        red = jax.tree_util.tree_map(lambda x: x, red)
+        k = red["params"]["hidden_0"]["kernel"]
+        red["params"]["hidden_0"] = dict(red["params"]["hidden_0"], kernel=pasar(k, m, 0.0))
+        return red
+
+    return norm, capa0(pol, mapas["state"]), capa0(val, mapas["privileged_state"])

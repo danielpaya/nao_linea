@@ -6,7 +6,7 @@ Uso (desde ~/nao_rl):
     $PY evaluar.py runs/nao_v01c_s0_XXXX                 # 8 carreras de 5 m por condicion
     $PY evaluar.py runs/nao_v01c_s0_XXXX --carreras 16
 
-Cada carrera: sale del reposo mirando a lo largo de la pista, comando fijo (0.3 m/s, sin giro), SIN vision, hasta
+Cada carrera: sale del reposo mirando a lo largo de la pista, comando fijo (la velocidad maxima de la generacion: 0.3 m/s hasta v05a; sin giro), SIN vision, hasta
 llegar a 5 m, caerse o 40 s. Todas las carreras de una condicion corren a la vez en la GPU.
 
 Condiciones (una cosa distinta del mundo nominal cada vez):
@@ -122,6 +122,7 @@ def hacer_evaluador(env, politica, n, pasos, vx=0.3):
             st = env.reset(k_reset)
             q = st.data.qpos.at[3:7].set(jp.array([1.0, 0.0, 0.0, 0.0]))   # mirando a lo largo de la pista
             info = dict(st.info, comando=cmd, latencia=latencia)
+            info.update(nc.salida_recta(info))     # carril = eje x de la pista, robot centrado y derecho
             st = st.replace(data=st.data.replace(qpos=q), info=info)
             x0, y0 = q[0], q[1]
 
@@ -168,7 +169,8 @@ def hacer_evaluador(env, politica, n, pasos, vx=0.3):
 def evaluar_run(run, carreras=8, segundos=40.0, imprimir=True):
     t0 = time.time()
     env, politica, cfg = cargar(run)
-    ev = hacer_evaluador(env, politica, carreras, int(round(segundos / env.dt)))
+    vx = float(env._config.vx[1])               # la velocidad maxima que aprendio (0.3 m/s hasta v05a)
+    ev = hacer_evaluador(env, politica, carreras, int(round(segundos / env.dt)), vx=vx)
     filas = []
     for nombre, cambios in CONDICIONES:
         r = ev(jp.float32(cambios.get("friccion", 1.0)), jp.float32(cambios.get("kp", 1.0)),

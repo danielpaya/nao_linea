@@ -1,0 +1,4 @@
+# Dia 3 (2026-10-14): etapa de velocidad. Cada una arranca desde la anterior (--desde). Ver bitacora [34].
+nao_v05a --semilla 0 --pasos 60000000 --desde runs/nao_v04_s0_20261013_195524
+nao_v05b --semilla 0 --pasos 60000000 --desde nao_v05a
+nao_v05c --semilla 0 --pasos 60000000 --desde nao_v05b

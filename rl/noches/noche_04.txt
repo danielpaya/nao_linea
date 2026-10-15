@@ -1,0 +1,4 @@
+# Noche 4 (2026-10-14): vision simulada sobre v05c (0.5 m/s, motores reales). Ver bitacora [38].
+# El trasplante de pesos es automatico (v05c no tiene las entradas psi/d de la camara).
+nao_v06 --semilla 0 --pasos 120000000 --desde runs/nao_v05c_s0_20261014_094508
+nao_v06 --semilla 1 --pasos 120000000 --desde runs/nao_v05c_s0_20261014_094508

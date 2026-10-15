@@ -1,0 +1,6 @@
+# Tarde del dia 3 (2026-10-14). Ver bitacora [38].
+# 1) v05c con otras semillas, arrancando del MISMO v05b (s0): mide la variacion de la ultima etapa (0.4 -> 0.5 m/s).
+nao_v05c --semilla 1 --pasos 60000000 --desde runs/nao_v05b_s0_20261014_084930
+nao_v05c --semilla 2 --pasos 60000000 --desde runs/nao_v05b_s0_20261014_084930
+# 2) techo de velocidad: 0.6 m/s desde v05c s0
+nao_v05d --semilla 0 --pasos 60000000 --desde runs/nao_v05c_s0_20261014_094508

@@ -50,7 +50,7 @@ def cargar(run):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run", help="carpeta runs/<generacion>_<fecha>")
-    ap.add_argument("--vx", type=float, default=0.3)
+    ap.add_argument("--vx", type=float, default=None, help="por defecto, la velocidad maxima de la generacion")
     ap.add_argument("--giro", type=float, default=0.0)
     ap.add_argument("--carreras", type=int, default=5)
     ap.add_argument("--video", default=None, help="mp4 de salida (por defecto <run>/carrera.mp4); 'no' para omitir")
@@ -60,6 +60,8 @@ def main():
     env, politica, cfg = cargar(a.run)
     print("Generacion %s: %s" % (cfg["generacion"], cfg["hipotesis"]))
     reset, paso = jax.jit(env.reset), jax.jit(env.step)
+    if a.vx is None:
+        a.vx = float(env._config.vx[1])
     cmd = jp.array([a.vx, a.giro])
     m = env.mj_model
     d = mujoco.MjData(m)
@@ -86,6 +88,7 @@ def main():
         q = st.data.qpos.at[3:7].set(jp.array([1.0, 0, 0, 0]))
         st = st.replace(data=st.data.replace(qpos=q))
         st.info["comando"] = cmd
+        st.info.update(nc.salida_recta(st.info))   # carril = eje x de la pista, robot centrado y derecho
         key = jax.random.PRNGKey(i)
         t, resultado, x0 = 0.0, "tiempo", float(st.data.qpos[0])
         rumbo_max = desvio_max = rumbo_2s = 0.0
