@@ -1,0 +1,15 @@
+OK     carril virtual coherente: d integrada vs geometria, error max 0.45 cm (< 1 cm)
+OK     ruido de psi: sesgo -0.013, sigma 1.189 grados (configurado 1.203)
+OK     ruido de d: sesgo -0.007, sigma 1.626 cm (configurado 1.600)
+OK     cuadros perdidos: 4.8 % (configurado 5.0 %)
+OK     retraso efectivo: 144 ms (esperado ~132 ms)
+OK     usa la vision: error lateral final 4.7 cm (normal) vs 77.8 cm (apagada); salidas 0 vs 86
+OK     invertir la vision la empeora: 38.6 cm y 96 salidas (normal 4.7 cm, 0)
+OK     izq_10cm: se recentra hacia el lado correcto (10.0 -> -4.3 cm)
+FALLA  der_10cm: se recentra hacia el lado correcto (-10.0 -> -5.9 cm)
+OK     gira_+8: corrige el rumbo (8.0 -> 0.5 grados)
+OK     gira_-8: corrige el rumbo (-8.0 -> 0.9 grados)
+
+Estadistica (modo normal, salidas dentro de lo entrenado, 112 carreras):
+  salidas del carril: 0/112 -> la tasa real es <= 2.6 % (95 %)
+  no llega a la meta: 0/112 -> la tasa real es <= 2.6 % (95 %)

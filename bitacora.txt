@@ -502,3 +502,253 @@ Politicas copiadas a rl/politicas/ (politica.pkl, config.json, evaluacion.csv): 
   nao_v04_s0 (verificado en la carpeta del usuario). README: estado (v04), arbol de generaciones, tabla de hipotesis y
   si se cumplieron, resultados v01-v04, hallazgos del dia 2, nuevos problemas y soluciones, cola reanudable y
   vigilante, siguientes pasos. El usuario hace el commit y el push a la rama rl-nao-mjx.
+
+=== [32] 2026-10-13 23:20 · El vigilante relanzo la noche 3 (funcionamiento correcto, pero no deseado) ===
+logs/noche_20261013_230959.log: la noche 3 arranco a las 23:09 y se interrumpio a mano a los ~2 min (sin --parar).
+logs/vigilante.log: "23:11:54 la cola noches/noche_03.txt no esta corriendo -> se relanza en tmux 'cola'";
+  logs/noche_20261013_231154.log: RELANZAMIENTO, nao_v04 s0 60 M en runs/nao_v04_s0_20261013_231156.
+Es la primera prueba real del vigilante en el PC del usuario: detecto la cola muerta y la relanzo en ~2 min. El
+  usuario queria dejar el PC sin entrenar y vio la GPU al 95 %. Leccion: para detener una cola a proposito hay que
+  usar "bash cola_noche.sh --parar"; Ctrl+C o cerrar tmux cuenta como caida.
+
+=== [33] 2026-10-14 07:30 · Noche 3: v04 con 60 M y semillas 1 y 2 (controles para el paper) ===
+Ejecucion (logs/noche_20261013_232602.log): la cola se relanzo a las 23:26 (marco cortada
+  runs/nao_v04_s0_20261013_231156) y corrio sola: v04 s0 60 M (57.0 min), s1 120 M (97.1), s2 120 M (95.9), luego
+  evaluacion y resumen (runs/resumen_20261014_0425.md) a las 04:25. vigilante.log: "06:00:02 vigilante iniciado (pid
+  293)" -> WSL o Windows se reinicio hacia las 06:00 (despues de terminar la cola) y la tarea de Windows volvio a
+  arrancar el vigilante, como estaba previsto. Causa del reinicio no revisada.
+Resultados (evaluacion.csv de cada corrida; metas fuera del nominal de 80):
+                     pasos  t nom   desvio nom  rumbo  retraso 3  empujon 0.45  metas fuera nom.
+  v04 s0 (dia 2)     120 M  17.1 s  10.4 cm     3.3    8/8        4/8           76
+  v04 s1             120 M  18.0 s  47.5 cm     7.9    8/8        4/8           75
+  v04 s2             120 M  17.1 s  12.0 cm     3.9    8/8        2/8           74
+  v04 s0             60 M   17.9 s  26.7 cm     8.0    8/8        4/8           76
+  (hermanas v03c/v03m/v03e, 60 M: 65-73)
+Interpretacion:
+  1) Robustez reproducible: las 3 semillas llegan a 74-76/80, ninguna se cae en el nominal y todas aguantan 72 ms de
+     retraso. El empujon fuerte sigue en 2-4/8.
+  2) Combinar vs entrenar el doble: v04 con 60 M ya llega a 76/80, igual que con 120 M y por encima de cada hermana
+     de 60 M -> la robustez viene de la combinacion de cambios, no de entrenar mas. Entrenar mas mejora la rectitud
+     y algo la velocidad (26.7 -> 10.4 cm, 17.9 -> 17.1 s con s0).
+  3) La rectitud NO es reproducible entre semillas: s1 se desvia ~45 cm en casi todas las condiciones (giro hacia
+     un solo lado), s0 y s2 ~10-12 cm. -> Las conclusiones de dias anteriores basadas en el desvio de una sola
+     semilla (p. ej. "los codos la hacen mas recta", v01e) son debiles. El desvio no esta en la recompensa
+     (seguir_rumbo esta saturado en ~990/1000), por eso cada semilla termina con su propio sesgo.
+Problema repetido: el resumen volvio a evaluar una corrida cortada a los 0 M (12.5 min perdidos). Mejora pendiente
+  desde [27]: resumen_manana.py debe saltar estado "cortado".
+Decision: la politica base para la etapa de velocidad es v04 s0 120 M (runs/nao_v04_s0_20261013_195524). Para la
+  rectitud: no fiarse de una sola semilla; candidato a reforzar con una recompensa que vea la deriva lateral o un
+  sigma_rumbo mas estricto (pendiente decidir), y en la carrera lo corrige la vision.
+
+=== [34] 2026-10-14 08:00 · Etapa de velocidad: motores reales, arranque desde una politica y v05a/b/c ===
+Decision (aprobada por el usuario): limites reales de motores + arrancar desde v04 + comando mas alto.
+Datos de motores (NAO, tabla de United Robotics/Aldebaran; motor de pierna 8700 rpm sin carga, 65 mN m bloqueo;
+  motor de brazo 10700 rpm, 14.3 mN m; reducciones por articulacion). Velocidad maxima en la articulacion =
+  rpm / reduccion: HipYawPitch, HipRoll, AnkleRoll (201.3) 4.53 rad/s; HipPitch, KneePitch, AnklePitch (130.85)
+  6.96 rad/s; ShoulderPitch (150.27) 7.46 rad/s; ElbowRoll (173.22) 6.47 rad/s. Torque de bloqueo en brazos:
+  2.15 N m (hombro) y 2.48 N m (codo), menor que el +-5 / +-3 N m del modelo; en piernas se deja el +-5 del modelo.
+  Las tablas oficiales son de V4/V5 y del fabricante actual; para el V6 exacto no se encontro hoja de datos (+-10 %).
+Que se hizo:
+  - nao_carrera.py: config motores_reales (por defecto False). Con True, en cada subpaso de fisica de 2 ms el
+    limite de torque de cada motor controlado es par_max * (1 - |w| / vel_max) (recta de un motor DC: a la
+    velocidad sin carga ya no da fuerza). Respeta el motor debil aleatorizado (parte del forcerange del modelo).
+    Prueba en CPU (sesion del asistente, MJX 3.6, acciones bruscas de +-1, 40 pasos): velocidad maxima de
+    HipRoll 11.0 -> 5.9 rad/s, HipPitch 12.9 -> 8.7, ElbowRoll 11.8 -> 5.7. Rodilla y tobillo siguen pasando el
+    tope al caer el robot (esa velocidad viene del impacto y la gravedad, no del motor; igual en el real).
+  - entrenar.py: --desde (carpeta runs/... o nombre de generacion -> su ultima corrida terminada); carga
+    politica.pkl (normalizador, politica, valor) y lo pasa a ppo.train(restore_params=...). Se guarda en
+    config.json ("desde"). No se pudo probar un entrenamiento completo en la sesion del asistente (7 GB de RAM: la
+    compilacion de PPO se queda sin memoria en CPU) -> primera prueba: --prueba en la GPU del usuario.
+  - evaluar.py y ver_politica.py: el comando de la carrera es la velocidad maxima de la generacion (vx[1]), no un
+    0.3 fijo. Hasta v05a no cambia nada.
+  - Generaciones (sin claves repetidas, verificado con ast; 17 en total):
+    nao_v05a = v04 + motores_reales (desde v04 s0 120 M). Hipotesis: sigue a 0.3 m/s con motores que el NAO tiene.
+    nao_v05b = v05a + comando hasta 0.4 m/s (desde v05a). Hipotesis: ~13 s sin perder robustez.
+    nao_v05c = v05b + comando hasta 0.5 m/s (desde v05b). Hipotesis: ~11 s sin perder robustez.
+  - Lista rl/noches/dia_03.txt (60 M cada una, ~3 h + evaluacion).
+Filtro para seguir subiendo (definido el 2026-10-13): 0 caidas en nominal, retraso 3 8/8, >= 70/80 metas fuera del
+  nominal y desvio nominal <= ~20 cm.
+
+=== [35] 2026-10-14 11:00 · Cola del dia 3 (v05a/b/c) entrenada; evaluacion en curso ===
+Prueba previa: entrenar.py nao_v05a --prueba --desde runs/nao_v04_s0_20261013_195524 funciono (el arranque desde
+  una politica entrenada anda en la GPU).
+Entrenamiento (logs de la cola; las 3 arrancaron de la anterior con --desde, 60 M cada una, ~56 min):
+  v05a (v04 + motores reales): recompensa inicial 18.7 y duracion 284 (v04 venia de 90.5 / 1000) -> con los limites
+    reales de los motores, la caminata de v04 se cae enseguida. Se recupera: 63.8 a los 6.7 M, final 84.6, duracion
+    973 (todavia se cae en ~3 % de los episodios de evaluacion del entrenamiento).
+  v05b (hasta 0.4 m/s): arranca en 78.4 / 929, final 83.1 / 968.
+  v05c (hasta 0.5 m/s): arranca en 73.1 / 890, final 80.9 / 956.
+  -> Interpretacion preliminar: los motores reales son el cambio mas duro hasta ahora; v04 dependia de movimientos
+     mas rapidos que los que el NAO puede hacer. Ninguna de las tres vuelve a duracion 1000.
+Problema: el resumen evaluo primero la corrida de --prueba (runs/nao_v05a_s0_20261014_074316, 20 000 pasos,
+  estado "terminado"): 0/8 en casi todo. Son resultados de una politica sin entrenar; NO son los de v05a. 12 min
+  perdidos. Mejora pendiente: que --prueba deje estado "prueba" para que la cola y el resumen la ignoren.
+Siguiente paso: evaluacion de las tres corridas reales (en curso, ~11:30).
+
+=== [36] 2026-10-14 12:15 · Evaluacion v05a/b/c: 11.3 s en 5 m con motores reales ===
+Fuente: runs/<corrida>/evaluacion.csv y runs/resumen_20261014_1129.md. Comando de la carrera = velocidad maxima de
+  cada generacion (0.3 / 0.4 / 0.5 m/s).
+                    t nominal  desvio nom  rumbo  se saldria  retraso 3   empujon 0.45  metas fuera del nominal
+  v04 (sin limites) 17.1 s     10.4 cm     3.3    0/8         8/8         4/8           76/80
+  v05a (0.3, reales) 17.4 s    28.7        4.5    6/8         8/8         1/8           73/80
+  v05b (0.4)        13.8 s     18.6        5.4    3/8         8/8 15.2 s  2/8           74/80
+  v05c (0.5)        11.3 s     10.3        3.1    0/8         7/8 12.9 s  3/8           74/80
+  v05c en el resto: friccion 0.2/0.5/1.5, kp 70, motor 70/40, retraso 1, empujon 0.25 -> 8/8 metas, 11.1-11.6 s.
+Interpretacion:
+  - Hipotesis de v05b (~13 s) y v05c (~11 s) cumplidas en simulacion, con motores con los limites reales del NAO
+    y sin caidas en el nominal. 11.3 s = 0.44 m/s de promedio contando la arrancada.
+  - Los motores reales costaron robustez a 0.3 m/s (v05a: empujon fuerte 1/8, mas desvio), pero al subir la
+    velocidad la caminata se reorganizo: v05c va mas recta que v05a (10 vs 29 cm).
+  - Filtro para seguir subiendo: 0 caidas nominal SI; >= 70/80 SI (74); desvio <= 20 cm SI (10.3); retraso 3 8/8
+    NO por una carrera (7/8). Empujon fuerte sigue siendo la debilidad (3/8).
+  - Cautelas: una sola semilla (la rectitud vario de 10 a 47 cm entre semillas de v04, [33]); datos de motores con
+    +-10 %; falta ver en video si el paso es razonable (que no sea un trote con fase de vuelo ni un movimiento que
+    el robot real no aguante) y confirmar en el reglamento si se permite.
+Problema: el resumen volvio a evaluar la corrida de --prueba (12 min). Pendiente de [35].
+
+=== [37] 2026-10-14 12:20 · Video de v05c (ver_politica.py, 5 carreras a 0.5 m/s) ===
+Resultado (salida de ver_politica.py; video runs/nao_v05c_s0_20261014_094508/carrera.mp4): 5/5 metas, 0 caidas,
+  10.8 / 11.0 / 11.1 / 11.2 / 12.5 s, velocidad media 0.444 m/s, desvio max medio 6.9 cm (1.6-15.4), rumbo max medio
+  4.3 deg, rumbo final entre +0.3 y +2.3 deg (sin sesgo fuerte). Primera vez por debajo de 11 s (carrera 5: 10.8 s).
+Revision visual del asistente (mosaico de 8 cuadros a partir de los 4 s): tronco erguido, brazos algo abiertos, pasos
+  cortos y rapidos; no se aprecia una fase de vuelo clara, pero desde esa camara no se puede asegurar. Pendiente la
+  revision del usuario (pies, golpes contra el piso, brazos contra la cadera).
+
+=== [38] 2026-10-14 13:05 · Tarde 3 (semillas de v05c y v05d) y vision simulada (v06) ===
+Decision (aprobada por el usuario): semillas 1 y 2 de v05c, v05d a 0.6 m/s y vision simulada.
+Cola de la tarde (rl/noches/tarde_03.txt): v05c s1 y s2 desde el MISMO v05b s0 (solo varia la ultima etapa
+  0.4 -> 0.5 m/s; repetir toda la cadena con otra semilla serian 3 h por semilla) y v05d (vx hasta 0.6 m/s) desde
+  v05c s0. 60 M cada una.
+Vision simulada (nao_carrera.py, config vision.activa; por defecto apagada, las generaciones anteriores no cambian):
+  - Carril virtual: su direccion es el rumbo deseado (integra el giro pedido); d integra la velocidad lateral
+    respecto a esa direccion (qvel lineal del mundo). psi = rumbo deseado - rumbo real.
+  - Camara: cada 4 pasos de 24 ms (~10 Hz) se publica el cuadro anterior (1 cuadro de retraso, ~100-200 ms en total)
+    y se toma uno nuevo con ruido gaussiano sigma 1.6 cm / 1.2 grados (medido con el estimador real, entrada [1]);
+    5 % de cuadros perdidos (se mantiene la medicion anterior).
+  - La politica ve psi (en el lugar del error de rumbo) y d (recortado a +-0.5 m). El critico ve ademas d y psi
+    reales. Nuevo premio seguir_carril = exp(-d^2 / 0.01) (por defecto escala 0).
+  - Salida chueca en el entrenamiento: d0 +-10 cm, psi0 +-8 grados. evaluar.py y ver_politica.py, en cambio, alinean
+    el carril con la pista y salen centrados (salida_recta), para comparar con las generaciones anteriores. Detalle:
+    la primera observacion de la evaluacion todavia trae la salida chueca del reset (1 paso).
+  - nao_v06 = v05c + vision + seguir_carril 1.0, desde v05c s0.
+Trasplante de pesos (nao_carrera.trasplantar, automatico en entrenar.py --desde cuando cambia la observacion): cada
+  entrada se identifica por nombre (env.etiquetas()); las existentes copian su fila de la primera capa y su
+  estadistica del normalizador; psi de la camara hereda la del error de rumbo; las nuevas (d, y en el critico d y psi
+  reales) empiezan con peso 0 y media 0 / desviacion 1.
+Pruebas en CPU (sesion del asistente, politica real de v05c):
+  - etiquetas = tamano de la observacion: actor 168 -> 171, critico 216 -> 221.
+  - misma accion con la red trasplantada y la original (diferencia maxima 0.0) cuando psi = error de rumbo y d = 0.
+  - 30 pasos con vision: la camara publica cada 4 pasos con ruido; con salida psi0 = 0.076 rad la politica
+    trasplantada lo baja a 0.025 rad en 0.7 s sin caerse; sin NaN.
+Cola de la noche: rl/noches/noche_04.txt -> v06 s0 y s1, 120 M cada una (~3 h 20 + evaluacion).
+
+=== [39] 2026-10-14 14:00 · Se lanzo la cola de la noche (v06) en vez de la de la tarde: se intercambian ===
+logs/noche_20261014_122719.log: a las 12:27 arranco rl/noches/noche_04.txt (v06) y no tarde_03.txt (no hay log de la
+  tarde ni carpetas de v05c s1/s2 ni v05d). No se perdio nada: solo cambia el orden. tarde_03 pasa a la noche.
+v06 s0 (runs/nao_v06_s0_20261014_122724), progreso del log: el trasplante funciono en la GPU ("168 -> 171 entradas del
+  actor, 216 -> 221 del critico"). Recompensa 89.8 al arrancar (v05c termino en 80.9; la suma ahora incluye
+  seguir_carril, no es comparable), 86.3 a los 13 M, sube hasta 100.7 a los 107 M; duracion 916-975 (sigue
+  cayendose en algunos episodios del entrenamiento, como v05c).
+
+=== [40] 2026-10-14 17:05 · nao_v06 (vision simulada): 10.9 s, 0/8 salidas del carril en las 11 condiciones, 2 semillas ===
+Entrenamiento (logs/noche_20261014_122719.log; 120 M cada una desde v05c s0, con trasplante de pesos): s0 89.8 -> 100.9
+  (96.4 min), s1 86.2 -> 102.2 (97.7 min); duracion final 971 / 979.
+Evaluacion (runs/nao_v06_s0_20261014_122724/evaluacion.csv, runs/nao_v06_s1_20261014_140353/evaluacion.csv,
+  runs/resumen_20261014_1606.md; salida centrada y derecha, camara simulada con ruido; v05c entre parentesis):
+                   s0                        s1
+  nominal          10.9 s, 6.8 cm, 0/8 fuera  11.2 s, 6.8 cm, 0/8 fuera   (v05c 11.3 s, 10.3 cm, 0/8)
+  friccion 0.2     10.6 s, 6.7 cm             10.9 s, 7.1 cm              (v05c 30.1 cm, 5/8 fuera)
+  kp 70            11.1 s, 3.7 cm             11.3 s, 9.9 cm
+  motor 40         11.1 s, 7.4 cm             11.2 s, 6.5 cm              (v05c 19.4 cm)
+  retraso 3        8/8, 12.1 s, 5.4 cm        8/8, 12.6 s, 10.2 cm        (v05c 7/8, 15.4 cm)
+  empujon 0.45     5/8                        4/8                         (v05c 3/8)
+  "se saldria del carril": 0/8 en las 11 condiciones, en ambas semillas.
+  metas fuera del nominal: 77/80 (s0) y 76/80 (s1) (v05c 74/80).
+Interpretacion: hipotesis de v06 confirmada: con la camara simulada se centra sola, el desvio queda en 4-10 cm en todas
+  las condiciones (sin vision llegaba a 30 cm y variaba de 10 a 47 cm entre semillas de v04), mantiene ~11 s (10.9 s con
+  s0) y es reproducible entre 2 semillas. Pasa el filtro completo (0 caidas nominal, retraso 3 8/8, >= 70/80, desvio
+  <= 20 cm). Lo debil sigue siendo el empujon fuerte (4-5/8).
+Cautelas: la evaluacion sale centrada y derecha (la salida chueca solo se entreno, falta evaluarla); la camara es un
+  modelo de error (ruido, 10 Hz, retraso, perdidas), no imagenes renderizadas; todo es simulacion.
+
+=== [41] 2026-10-14 17:10 · Video de v06 s0 (ver_politica.py, 5 carreras a 0.5 m/s, con camara simulada) ===
+Resultado (video runs/nao_v06_s0_20261014_122724/carrera.mp4): 5/5 metas, 0 caidas, 10.8 / 10.8 / 10.9 / 12.0 / 10.5 s,
+  velocidad media 0.456 m/s, desvio max medio 4.4 cm (2.7-5.6), rumbo max medio 4.0 deg. v05c en la misma prueba:
+  6.9 cm y 0.444 m/s ([37]). Detalle: ver_politica.py todavia imprime "(sin vision)" al final; con v06 la politica si
+  usa la camara simulada. Se corrio mientras entrenaba la cola de la tarde (comparten la GPU, sin problema).
+
+=== [42] 2026-10-14 21:05 · Tarde 3 evaluada: v05c reproducible (3 semillas) y v05d a 0.6 m/s en 9.4 s ===
+Nota: la cola de la tarde corrio despues de la de la noche por el intercambio de [39]; se ejecutaron las dos completas
+  (logs/noche_20261014_122719.log y la de las 16:07). Resumen: runs/resumen_20261014_1936.md.
+Entrenamiento (60 M cada una): v05c s1 71.9 -> 81.1, s2 73.8 -> 78.3 (ambas desde v05b s0); v05d 73.5 -> 75.9 (desde
+  v05c s0), duracion final 922.
+Evaluacion (evaluacion.csv de cada corrida; sin vision; metas fuera del nominal de 80):
+                 t nominal  desvio nom  retraso 3        empujon 0.45  metas fuera nom.  se saldria (peor)
+  v05c s0        11.3 s     10.3 cm     7/8              3/8           74                5/8 (friccion 0.2)
+  v05c s1        11.2 s      7.3 cm     8/8 12.7 s       3/8           75                3/8 (motor 40)
+  v05c s2        11.1 s     10.1 cm     8/8 12.5 s       2/8           74                4/8 (retraso 3)
+  v05d s0 (0.6)   9.4 s     17.9 cm     8/8 10.8 s       4/8           76                4/8 (retraso 1 y 3)
+  v05d en todas las demas condiciones: 8/8 metas, 9.3-9.8 s.
+Interpretacion:
+  - Los ~11 s de v05c son reproducibles en la ultima etapa (3 semillas: 11.1-11.3 s, 74-75/80, 0 caidas nominal),
+    partiendo del mismo v05b. Hipotesis de v05c confirmada con 3 semillas.
+  - El techo de velocidad con motores reales no esta en 0.5 m/s: v05d hace 5 m en 9.4 s (0.53 m/s de promedio) sin
+    caerse en el nominal y con la misma robustez (76/80, retraso 3 8/8). A cambio se desvia mas sin vision (18 cm,
+    hasta 27 cm con retraso). Hipotesis de v05d (medir el techo): el techo es mayor que 0.6 m/s o esta cerca; no se
+    alcanzo.
+  - Debilidad comun: empujon fuerte (2-4/8).
+Siguiente paso posible: vision sobre v05d (como v06 sobre v05c). Cautela: a mas velocidad, mas brecha con el robot
+  real; v05d no es para la carrera hasta probar el robot real.
+
+=== [43] 2026-10-14 21:30 · Nuevo script validar_vision.py (Capa 1: validar la camara simulada y que v06 la usa) ===
+Objetivo: comprobar que (a) la camara simulada mide lo que dice medir y (b) la politica de verdad usa la vision, antes de
+  seguir subiendo velocidad. Pregunta del equipo: "que me garantiza que el resultado sea el correcto".
+Que se hizo: rl/validar_vision.py (solo evalua, no entrena; mundo nominal, comando de carrera, semillas desde 1000).
+  1) Sensor: d integrada (carril virtual) vs d por geometria; sesgo y sigma del ruido de cada cuadro vs lo configurado;
+     fraccion de cuadros perdidos; retraso efectivo (corrimiento que minimiza el error psi observado vs real).
+  2) 9 salidas chuecas: centrada, +-10 cm, +-8 grados, 10 cm "hacia afuera" (corrida y apuntando al mismo lado) y dos
+     fuera de lo entrenado (20 cm, 15 grados). Se mide avance y d en el marco del carril.
+  3) Sabotaje: mismas salidas con la vision apagada (psi = d = 0) e invertida (signos al reves), aplicado a la
+     observacion de la politica (incluida su historia), sin tocar el entorno.
+  4) Cota superior 95 % (Clopper-Pearson) de la tasa de salidas y de no llegar.
+  Salida: <run>/validacion_vision/ resumen.csv, sensor.json, veredicto.txt, trayectorias.png, sensor.png.
+  Diferencia con evaluar.py: aqui la observacion inicial se recalcula despues de fijar la salida (evaluar.py usa la del
+  reset, con psi0/d0 al azar en la historia durante los primeros pasos; efecto pequeno, queda anotado).
+Prueba (CPU, sin GPU): politica falsa = pesos de v05c trasplantados a la observacion de v06 (el punto de partida de v06),
+  2 carreras x 4 s por salida. Corre de punta a punta y las graficas salen bien. Sensor: carril 0.18 cm de error max,
+  ruido psi 1.13 deg (config 1.20), d 1.64 cm (config 1.60), perdidas 4.2 % (5 %), retraso 144 ms (esperado ~132).
+  Esos numeros solo validan el script; los de v06 salen al correrlo en la GPU.
+Siguiente: correr validar_vision.py con v06 s0 y s1 en la GPU y registrar el veredicto.
+
+=== [44] 2026-10-14 21:45 · validar_vision.py con v06 s0 y s1 (GPU, 16 carreras por salida y por modo, 4 min cada una) ===
+Resultado (runs/nao_v06_s{0,1}_*/validacion_vision/: resumen.csv, sensor.json, veredicto.txt, trayectorias.png):
+  Sensor (igual en las dos): carril virtual vs geometria 0.45 cm max; ruido psi sesgo -0.01 sigma 1.19 deg (config
+    1.20), d sesgo -0.01 sigma 1.63 cm (config 1.60); perdidas 4.8 % (5 %); retraso efectivo 144 ms (esperado ~132,
+    resolucion 24 ms). La camara simulada hace lo que dice.
+  Vision normal, 9 salidas (7 entrenadas + 20 cm y 15 grados no entrenadas): 144/144 metas, 0 caidas, 0 salidas del
+    carril en cada semilla; 10.8-10.9 s (s0) y 11.1-11.2 s (s1). Incluye las no entrenadas (20 cm y 15 grados).
+  Sabotaje: apagada -> 86/144 (s0) y 80/144 (s1) salidas, error lateral final 78 y 62 cm (normal 4.7 y 4.2 cm);
+    invertida -> 0/144 metas, 144/144 salidas, se va a ~1 m del centro. La politica SI usa la vision.
+  Estadistica: 0/112 salidas y 0/112 sin meta por semilla (salidas entrenadas) -> tasa real <= 2.6 % (95 %); juntando
+    las dos semillas 0/224 -> <= 1.3 %. Solo mundo nominal y con este modelo de camara.
+  Veredicto: todo OK salvo 1 FALLA en s0: der_10cm termina en -5.9 cm (criterio: < 5 cm).
+Interpretacion:
+  - La FALLA no es que no corrija: todas las salidas terminan en d = -3 a -6 cm, incluida la centrada (-4.5 cm) e
+    izq_10cm (pasa de +10 a -4.3). Hay un SESGO estable de ~4-5 cm hacia la derecha en las dos semillas. El criterio
+    del script compara contra 0 y no contra ese sesgo. En un carril de 70 cm deja ~25 cm de margen: no es grave, pero
+    es real. Posible causa: sigma_carril = 0.01 m^2 es ancho (en d = 4.5 cm el premio sigue en 0.82, casi no castiga).
+  - Hallazgo importante: con la vision apagada, incluso saliendo centrada, se sale (15/16 s0, 10/16 s1, hacia la
+    derecha). La marcha por si sola deriva y depende de la vision para corregir; v06 ya no ve el rumbo del giroscopio
+    (vis_psi ocupo su lugar). Si la camara real se pierde varios segundos, el robot se va. Argumento para la Capa 3
+    (fusion giroscopio + vision y apagones mas largos al entrenar).
+Siguiente: decidir entre (a) generacion con sigma_carril mas estrecho para quitar el sesgo, (b) giroscopio de vuelta
+  en la observacion / apagones largos (Capa 3), (c) vision sobre v05d.
+
+=== [45] 2026-10-14 22:00 · README actualizado con el dia 3 (velocidad, motores reales, vision y su validacion) ===
+Cambios en README.md: estado v06 10.9 s con vision; motores reales (tabla de limites); observacion con psi y d;
+  modelo de error de la camara; seguir_carril; decisiones nuevas (etapas de velocidad, --desde, trasplante, vision como
+  modelo de error); arbol y tabla de hipotesis v05a-v06; resultados del dia 3 (v04 a v06 s1); respuesta de la noche 3;
+  7 hallazgos del dia 3; seccion de validacion de la vision con trayectorias.png y la cota <= 1.3 %; problemas nuevos;
+  comandos para reproducir la cadena v04 -> v06; siguientes pasos.
+  Fuentes: entradas [33]-[44]. Se quito una fila "se saldria" que mezclaba valores nominales y de la peor condicion.
+Pendiente: copiar a rl/politicas/ nao_v05c_s0, nao_v05d_s0 y nao_v06_s0 (el README ya las lista).

@@ -1,0 +1,33 @@
+{
+ "carril_int_vs_geo_max_cm": 0.4497416317462921,
+ "cuadros": 16374,
+ "ruido_psi_media_deg": -0.013462616130709648,
+ "ruido_psi_sigma_deg": 1.1886271238327026,
+ "ruido_psi_config_deg": 1.2032113697747289,
+ "ruido_d_media_cm": -0.007204867899417877,
+ "ruido_d_sigma_cm": 1.6257455348968506,
+ "ruido_d_config_cm": 1.6,
+ "perdida_medida": 0.04818237831176833,
+ "perdida_config": 0.05,
+ "retraso_medido_ms": 144.0,
+ "retraso_esperado_ms": 132.0,
+ "rmse_por_retraso_deg": [
+  1.504,
+  1.421,
+  1.348,
+  1.289,
+  1.247,
+  1.221,
+  1.218,
+  1.238,
+  1.277,
+  1.32,
+  1.367,
+  1.419,
+  1.474,
+  1.524,
+  1.571,
+  1.615,
+  1.656
+ ]
+}
