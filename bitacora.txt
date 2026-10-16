@@ -949,3 +949,201 @@ Prueba (Chromium sin pantalla, servidor local): claro y oscuro a 1300 px y oscur
   sin desborde horizontal; mapa de calor con la escala de color y la leyenda, graficas y tablas completas.
   Abrir docs/index.html con doble clic no carga los datos (el navegador bloquea fetch en file://): hace falta
   GitHub Pages o un servidor local.
+
+=== [56] 2026-10-15 21:10 · rl/choques.py: medir si el NAO se choca consigo mismo (pierna-pierna, brazo-cuerpo) ===
+Motivo: el entrenamiento y la demo solo tienen choques pie-piso (escena_mjx.py); una pierna puede atravesar a la
+  otra sin que la simulacion lo note. El analisis de esfuerzo dio separacion minima entre centros de pies de 6.2 cm
+  (v05d) a 8.6 cm (v07b), con un pie de ~7.5 cm de ancho: hay que medirlo con las piezas reales.
+Que se hizo: rl/choques.py. (1) GPU/MJX: carreras con la fisica del entrenamiento (mitad centradas, mitad chuecas
+  +-10 cm / +-8 grados), postura cada 24 ms hasta meta o caida. (2) CPU: modelo completo nao_assets/scene.xml
+  (piezas de choque: cajas de muslo, tibia y pie, esferas de cadera, cajas de brazos, torso) y mj_geomDistance para
+  23 pares: 9 pierna izquierda-pierna derecha y 14 brazo-cuerpo (antebrazo y muneca con torso, cadera y muslo del
+  mismo lado; brazo con muslo). Por par: distancia minima, p1, % de posturas con penetracion y a menos de 5 mm, y la
+  distancia en la postura inicial. Guarda runs/choques_<fecha>.json.
+Problema encontrado en la prueba: mj_geomDistance a veces devuelve 0 exacto con las piezas separadas (los puntos
+  mas cercanos que reporta estan a ~3 cm); una penetracion real sale negativa. Se reintenta con otro distmax y, si
+  no, se usa la distancia entre esos puntos; si tampoco, la postura se excluye (contada en sin_medir: 2 de 2852 en
+  la prueba).
+Prueba (CPU, politica de prueba y v07a, 2 carreras x 4 s): corre de punta a punta. Distancias en postura inicial:
+  muslos y tibias 3.0 cm, pies 3.1 cm, antebrazo-cadera 2.2 cm.
+Limitaciones: piezas de choque aproximadas (no la carcasa real); resolucion 24 ms.
+Siguiente: correr --todas en la GPU con 32 carreras por politica.
+
+=== [57] 2026-10-15 21:25 · Choques del NAO consigo mismo, 7 politicas (choques.py en la GPU, 32 carreras c/u) ===
+Fuente: runs/choques_20261015_2113.json (mitad salidas centradas, mitad chuecas +-10 cm / +-8 grados; 0 caidas en
+  todas; 12 500-15 000 posturas por politica; 15-29 posturas por politica sin medir por el fallo de mj_geomDistance).
+Resultado (solo el par pie-pie llega a tocarse; el resto de pares de piernas nunca baja de 3.4 mm):
+                 pie-pie se tocan   penetracion max   pie-pie a < 5 mm   tibia-tibia min   brazo-cuerpo min
+  v06d (0.6)     0.12 %             1.5 mm            3.2 %              5.7 mm            1.8 cm
+  v05d (0.6)     0.59 %             1.3 mm            7.9 %              4.8 mm            1.9 cm
+  v06            0.01 %             0.5 mm            1.2 %              4.8 mm            1.9 cm
+  v07c           0.03 %             0.3 mm            0.7 %              4.4 mm            1.9 cm
+  v07b           0 %                (min +0.2 mm)     0.4 %              3.8 mm            1.9 cm
+  v07a           0 %                (min +0.1 mm)     0.4 %              7.0 mm            1.9 cm
+  v05c           0.02 %             1.4 mm            1.1 %              3.4 mm            1.9 cm
+Interpretacion:
+  - Ninguna politica se atraviesa de forma importante: lo maximo son roces de 1-1.5 mm entre los pies, en menos del
+    1 % de las posturas. Brazos nunca a menos de 1.8 cm del cuerpo.
+  - A 0.6 m/s los pies pasan mas cerca (v05d 7.9 % de las posturas a menos de 5 mm, v06d 3.2 %); a 0.5 m/s, 0.4-1.2 %.
+  - v07a y v07b no llegan a tocarse; v07a tambien es la de menos calor (68 %) y energia ([54]): candidata para la
+    primera prueba en el robot real.
+  - Cautelas: piezas de choque aproximadas (cajas; el pie real tiene bordes redondeados y carcasa distinta), muestreo
+    cada 24 ms (un roce mas corto puede no verse); no reemplaza mirar el robot real con arnes.
+
+=== [58] 2026-10-15 22:30 · Analisis de caidas: como sufre cada articulacion, 7 politicas x 100 caidas (demo/caidas.py) ===
+Pedido: por cada caminata, al menos 100 simulaciones en que el robot se cae por una causa distinta, y explicar como se
+  comporta cada articulacion y cuando ese comportamiento es critico para la integridad del robot.
+Que se hizo:
+  - demo/caidas.py (MuJoCo CPU, politicas numpy de rl/politicas). Modelo COMPLETO assets/nao/scene.xml (todas las piezas
+    chocan con el piso y entre si; en el entrenamiento solo chocaban los pies). El robot camina con la politica y entre
+    1.5 y 4.5 s se le provoca una caida; 7 causas rotando, con parametros al azar en cada simulacion: empujon
+    (0.5-1.2 m/s), golpe en el torso (40-100 N, 50-150 ms), tropiezo (pie en el aire frenado 30-80 N, 100-200 ms),
+    resbalon (friccion 0.02-0.08), motor muerto (un motor de pierna sin par), motores debiles (25-45 % del par),
+    retraso de la accion (5-10 ciclos). Si no cae en 3 s se repite x1.5 (hasta 3 veces); si aguanta, cuenta como
+    "resistio".
+  - Caida = torso > 35 grados o < 22 cm. Desde ahi el estado se copia en dos casos de 1.5 s: activo (la politica sigue
+    mandando) y protegido (motores sueltos, como el gestor de caidas de NAOqi).
+  - Cada 2 ms, por articulacion: carga externa (qfrc_constraint), par contra el tope, velocidad; por pieza: fuerza
+    contra el piso y cual toca primero. Criterios: carga > par de parada del motor real (sobrecarga), velocidad > w_max
+    (sobrevelocidad), > 2 N m contra el tope (golpe al tope). Motores: tipo 5 8.51 N m / 6.96 rad/s, tipo 1 11.97 N m /
+    4.16 rad/s, hombro pitch 2.15 / 7.46, codo roll 2.48 / 6.47; cabeza, hombro roll, codo yaw y muneca sin dato.
+  - demo/caidas_tablero.py: convierte results/caidas/caidas.json en docs/tablero/datos/caidas_*.json.
+  - Tablero de GitHub Pages: pestanas "Esfuerzo en la carrera" / "Caidas" (docs/index.html, tablero/caidas.js,
+    tablero/caidas.css; dash.js ya no dibuja Esfuerzo mientras esta oculta). Probado en claro, oscuro y 420 px.
+Problema y solucion: con el pico de un solo paso de 2 ms, el 100 % de las caidas salia critico (con piso y piezas
+  rigidas el golpe es un impulso de un paso). Se paso al pico del promedio de 20 ms; el pico instantaneo se guarda
+  aparte (ext_inst). Los datos de la pagina primero se armaron sin script; se escribio caidas_tablero.py y se
+  verifico que reproduce las 5 tablas sin diferencias.
+Fuente: results/caidas/caidas.json (2026-10-15 22:05, 700 caidas de 1154 simulaciones, 111 resistieron).
+Resultado por politica (caso activo / protegido):
+                 simul.  resistio  sobrecarga pierna   severidad mediana (p95)   cabeza primero   cae adelante
+  v06d (0.6)     159     17        73 % / 46 %         1.25 (2.45) / 0.98        15 %             72 %
+  v05d (0.6)     143      8        71 % / 42 %         1.21 (2.60) / 0.94         9 %             66 %
+  v06            160     17        72 % / 48 %         1.20 (2.60) / 0.98         8 %             68 %
+  v07a           144      9        68 % / 48 %         1.16 (2.75) / 0.95        16 %             64 %
+  v07b           180     20        72 % / 39 %         1.23 (2.37) / 0.88        19 %             46 %
+  v07c           199     25        63 % / 31 %         1.11 (2.41) / 0.89        16 %             40 %
+  v05c           169     15        64 % / 36 %         1.10 (2.29) / 0.89        11 %             51 %
+  (severidad = max carga en pierna / par de parada; > 1 = el motor no puede sostenerla)
+Por articulacion (todas, activo; carga mediana / par de parada, % caidas con sobrecarga, sobrevelocidad, golpe al tope):
+  hombro pitch 2.71x, 92 %, 13 %, 5 %   -> lo mas critico: una mano toca primero en 65 % de las caidas (cabeza 13 %)
+  codo roll    1.06x, 57 %, 17 %, 19 %
+  cadera pitch 1.03x, 52 % (p95 2.4x), 42 %, 24 %
+  rodilla      0.65x, 14 %, 53 %, 22 %
+  tobillo pitch 0.51x, 6 %, 48 %, 25 %
+  cadera roll / yaw 0.4x, 3-6 %, 45-46 %, 8-20 %
+  tobillo roll 0.20x, 0 %, 81 %, 8 %     -> motor lento (4.16 rad/s): es arrastrado, riesgo para los engranajes
+  protegido: baja la sobrecarga de piernas (cadera pitch 52 -> 26 %) pero suben los golpes al tope (tobillo pitch
+  25 -> 52 %, rodilla 22 -> 34 %, cabeza pitch 35 %); el hombro sigue en 95 % (la carga viene del golpe, no del motor).
+Por causa (todas, activo): tropiezo es la peor (severidad 2.18, 99 % con sobrecarga, cae en 0.17 s hacia adelante,
+  la cabeza toca primero con mas frecuencia); golpe en el torso 1.37 / 86 % / 0.26 s; retraso 1.20 / 73 %; empujon
+  1.16 / 66 %; resbalon 1.08 / 65 % (solo 17 caidas, muchas veces resistio); motor muerto 1.06 / 61 %; motores
+  debiles la mas leve 0.85 / 27 %. Golpe de cabeza contra el piso: mediana 5.4 veces el peso del robot.
+Interpretacion:
+  - Las diferencias entre politicas son chicas frente a las diferencias entre causas: la caida en si domina.
+  - v07c y v05c caen menos hacia adelante y con menos sobrecarga en piernas; v07c ademas resistio mas causas (25).
+  - Soltar todos los motores no protege los brazos ni la cabeza; una postura de proteccion (brazos recogidos,
+    rodillas flexionadas) seria mejor que soltar todo. Para el robot real: arnes en las primeras pruebas y fall
+    manager de NAOqi activo.
+Limitaciones: piezas de choque aproximadas y piso rigido (valores absolutos de golpe altos; sirve para comparar);
+  servo simulado como PD con tope; sin dato de motor para cabeza, hombro roll, codo yaw y muneca.
+Siguiente: (opcional) probar una postura de proteccion como tercer caso; corregir w_max de tobillo/cadera roll a
+  4.16 rad/s en una generacion futura.
+
+=== [59] 2026-10-15 23:30 · Caidas: codigo rapido para Windows/Ubuntu, politicas de Camilo, videos y reproducibilidad (corrige [58]) ===
+Pedido: (1) correr las simulaciones de caidas en Ubuntu o Windows, mas en menos tiempo; (2) videos de las 10 peores
+  caidas; (3) reproducibilidad, porque el mismo analisis se hace con las politicas de Camilo
+  (CamiloGomezB/nao-v6-rl-race, commit ed8baa6).
+Que se hizo:
+  - demo/caidas.py reescrito: un MOTOR de caidas comun (fisica 2 ms, causas, registro, rama activo/protegido) y dos
+    ADAPTADORES: daniel (rl/politicas/*/politica_np.npz, como demo/rl_vivo.Carrera) y camilo (policies/*/model.zip +
+    model_vecnormalize.pkl + config.yaml, con su NaoRaceEnv para la observacion; se reemplaza solo env._paso_fisica).
+    Los dos repos usan el mismo assets/nao/scene.xml y nao.xml (comprobado byte a byte) y las mismas versiones fijadas
+    (mujoco 3.14.0, SB3 2.9.0, torch 2.14.0), asi que el pyproject de este repo sirve para las dos fuentes.
+  - Procesos en paralelo (ProcessPoolExecutor "spawn": igual en Windows y Linux; --procesos, por defecto nucleos - 1;
+    torch con 1 hilo por proceso). La simulacion k de una politica usa semilla 10000 + k y causa CAUSAS[k % 7]; se
+    guardan las primeras N caidas en orden de k, asi que el resultado no depende de cuantos procesos se usen.
+  - Bloque "reproducibilidad" en el JSON: comando, argumentos, commits de los dos repos, python, sistema, CPU,
+    versiones (mujoco, numpy, torch, SB3, gymnasium) y SHA-256 de cada archivo de politica y del modelo.
+    --verificar <json> re-simula las primeras caidas de cada politica y compara todos los numeros.
+  - demo/caidas_video.py: videos de las N peores caidas (criterio: carga relativa maxima en cualquier articulacion,
+    o --criterio pierna / cabeza; --por-politica N). Cada caida se re-simula desde su semilla y se comprueba que da
+    los mismos numeros antes de grabar. Vista 3D que sigue al robot + panel con la carga / par de parada de las 16
+    articulaciones con dato de motor (barra = ahora, raya y numero = maximo desde la causa); camara lenta x4 en la
+    caida y alrededor del instante de mayor carga. Salen en videos/caidas/<fuente>/ (no se versiona) con indice.json.
+  - demo/caidas_tablero.py junta las dos fuentes (cada fila de resumen dice su fuente); docs/tablero/caidas.js toma
+    la lista de politicas de los datos y la conclusion se calcula de los datos (antes tenia frases fijas); el texto
+    fijo de index.html se actualizo con las cifras nuevas y se agrego la comparacion Daniel / Camilo.
+  - Cambio de metodo respecto a [58]: con la causa "retraso", mientras llega la primera accion retrasada el motor
+    mantiene el ultimo objetivo (antes recibia la postura base); en las politicas de Daniel la curva par-velocidad se
+    aplica solo si su generacion la usaba (todas las 7 la usan).
+Comprobaciones:
+  - Adaptador camilo vs su env.step (rl_v1.2.1 y carrera_v01, 170 pasos): qpos identico (diferencia 0); adaptador
+    daniel vs demo/rl_vivo.Carrera (v07a, 150 pasos): identico.
+  - 1 proceso vs 2 procesos (v06 y v07a, 10 caidas): resultados identicos. --verificar: 21/21 (Daniel) y 18/18
+    (Camilo) caidas identicas. Los 20 videos reprodujeron su caida sin diferencias.
+Correccion de [58]: aquellos numeros salieron con MuJoCo 3.15.0 (no la 3.14.0 fijada en el pyproject) y con el
+  metodo anterior del retraso; las caidas son caoticas y cambian con la version (p. ej. v07c: 199 simulaciones y 8
+  empujones resistidos en [58], ahora 149 y 0). Se reemplazan por esta corrida (mujoco 3.14.0). [58] no se edita.
+Fuente: results/caidas/caidas.json (Daniel, 7 politicas, 1082 simulaciones, 141 s con 2 procesos) y
+  results/caidas/caidas_camilo.json (Camilo, 6 politicas, 797 simulaciones, 162 s con 2 procesos), 2026-10-15,
+  Linux, python 3.13, mujoco 3.14.0. Velocidad: ~0.26 s por simulacion y nucleo (Daniel), ~0.4 s (Camilo): con 15
+  procesos, las 13 politicas en ~1-2 min.
+Resultado (100 caidas por politica; caso activo / protegido):
+                         simul.  resistio  sobrecarga pierna  severidad mediana (p95)   cabeza 1.a  cae adelante
+  Daniel  v05c (0.5)     157     14        66 % / 34 %        1.12 (2.83) / 0.88        15 %        59 %
+          v05d (0.6)     143      8        74 % / 41 %        1.16 (2.60) / 0.93         7 %        70 %
+          v06            162     17        73 % / 44 %        1.16 (2.92) / 0.97         8 %        68 %
+          v06d (0.6)     159     17        68 % / 46 %        1.18 (2.54) / 0.98        14 %        70 %
+          v07a           147      9        66 % / 44 %        1.15 (2.76) / 0.96        14 %        62 %
+          v07b           165     17        72 % / 41 %        1.19 (2.66) / 0.92        19 %        65 %
+          v07c           149     11        64 % / 36 %        1.07 (2.44) / 0.89        10 %        61 %
+  Camilo  carrera_v01    129      2        86 % / 45 %        1.50 (2.74) / 0.98         3 %        55 %
+          carrera_v02    141      4        88 % / 52 %        1.52 (2.39) / 1.02        10 %        57 %
+          rl_v1.0        123      1        83 % / 38 %        1.74 (2.65) / 0.94        12 %        70 %
+          rl_v1.1        126      3        99 % / 48 %        2.10 (2.97) / 0.99         8 %        71 %
+          rl_v1.2        139      3        69 % / 36 %        1.25 (2.46) / 0.93        10 %        57 %
+          rl_v1.2.1      139      5        92 % / 40 %        1.47 (2.19) / 0.94         3 %        67 %
+  Camilo con vx_cmd 0.5 (el de su eval_carrera.py), sin perturbaciones de entrenamiento, friccion 1.0; carrera_v01
+  y v02 con rumbo_objetivo "arranque" (como se entrenaron).
+Todas juntas (1300 caidas, activo): hombro pitch carga mediana 2.5-2.8x su parada (sobrecarga en ~80-91 %); codo
+  roll ~1x (47-60 %); cadera pitch 1.1x (54-61 %, p95 2.4x, sobrevelocidad 50 %); rodilla 0.7x (18-21 %,
+  sobrevelocidad 72 %); tobillo pitch 0.5x (3-4 %, sobrevelocidad 62 %); tobillo roll 0.2x (0 %, sobrevelocidad
+  77 %). Protegido: cadera pitch baja a 24 %, tobillo pitch golpea su tope en 44 %, cabeza pitch en 40 %. Mano primero
+  74 %, cabeza 10 % (golpe mediano 6.1x el peso). Causa mas severa: tropiezo (2.11, 98.5 % con sobrecarga, 0.19 s).
+Interpretacion:
+  - Las politicas de Camilo sobrecargan mas las piernas con los motores encendidos y resisten menos causas. La
+    rl_v1.2 (castigo de esfuerzo de motores) es la suya que menos sobrecarga (69 %); rl_v1.1 la que mas (99 %, cadera
+    pitch 2x y hombro 4x). Parte de la diferencia entre fuentes es el modelo de motor: cada politica se simula con el
+    de su entrenamiento (Daniel: curva par-velocidad; Camilo: forcerange fijo +-5 N m).
+  - Con motores sueltos las dos fuentes quedan parecidas (34-52 %): la proteccion pesa mas que la politica.
+Videos (10 peores por fuente, criterio "todas": en las 20 la peor es el hombro pitch, 5.4-7.6x):
+  videos/caidas/daniel/01_v06d_tropiezo_id38.mp4 ... 10_v05d_empujon_id32.mp4
+  videos/caidas/camilo/01_rl_v1.0_empujon_id14.mp4 ... 10_rl_v1.2.1_tropiezo_id57.mp4 (detalle en indice.json)
+Problemas y solucion:
+  - concurrent.futures.CancelledError al terminar una politica (las tareas canceladas tambien salen en wait): se
+    saltan las canceladas.
+  - "Fatal Python error: Segmentation fault" al cargar la politica de Camilo despues de abrir OSMesa (torch con
+    triton/CUDA de la maquina de prueba): caidas_video.py importa torch antes que MuJoCo.
+  - En el video, el maximo del hombro aparecia en 1.3x y el JSON decia 6.2x: el golpe mas fuerte llegaba 1.46 s
+    despues de caer, despues del ultimo cuadro. Se agrego un cuadro final y camara lenta alrededor del pico.
+Limitaciones: piezas de choque aproximadas, piso rigido; distinto modelo de motor por fuente; entre Windows y Linux
+  los ultimos decimales pueden cambiar (y en caidas al limite, el desenlace): la referencia es la corrida de cada
+  maquina, comprobable con --verificar.
+Siguiente: correr en el PC con todos los nucleos y --verificar alla; si se quiere comparar las politicas sin el
+  efecto del modelo de motor, una opcion para simular las de Camilo con la curva par-velocidad.
+
+=== [60] 2026-10-16 00:10 · README: seccion de caidas con figuras y GIF (demo/caidas_figuras.py) ===
+Objetivo: llevar al README lo encontrado en el estudio de caidas ([58]-[59]), con figuras y videos.
+Que se hizo:
+  - Nueva seccion "Caidas: como sufre cada articulacion" en README.md: como se simulo, tabla por articulacion,
+    hallazgo principal (soltar motores baja la sobrecarga de piernas de 77 % a 42 %, pero no protege brazos ni
+    cabeza), causas y politicas, que significa para el robot real y comandos para reproducirlo. Fila nueva en el
+    resumen, filas en "Archivos", comandos y un siguiente paso (postura protectora, mismo modelo de motor).
+  - demo/caidas_figuras.py: genera media/caidas/articulaciones.png y causas_y_politicas.png a partir de
+    results/caidas/*.json, y convierte los videos elegidos en GIF (ffmpeg palettegen, 64 colores, 760 px, 12 fps).
+  - GIF incluidos (media/caidas/, ~8.4 MB en total): 01_v06d_tropiezo_id38, 02_v06_golpe_torso_id1 (Daniel) y
+    01_rl_v1.0_empujon_id14 (Camilo). Los mp4 siguen en videos/caidas/ (no se suben a git).
+Problema: al volver a bajar el README del PC para comprobar que no habia cambiado, se pisó la copia ya editada;
+  se reescribio la seccion con los mismos numeros de [59] (nada se perdio en el PC).
+Siguiente: simular la postura protectora como tercer caso; comparar Daniel y Camilo con el mismo modelo de motor.

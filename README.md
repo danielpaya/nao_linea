@@ -25,6 +25,7 @@
 | **Escala** | 4096 NAOs simulados a la vez · ~15 600 pasos/s · 60 M de pasos ≈ 56 min |
 | **Mejor resultado hasta ahora** | **v06 (con visión simulada):** 5 m en **10.9 s** con los límites reales de los motores del NAO, desvío de **4–7 cm**, **0 salidas del carril** en 224 carreras con salida chueca (tasa real ≤ 1.3 %, 95 %) y **77/80** metas fuera del nominal |
 | **Techo de velocidad medido** | **v05d:** 5 m en **9.4 s** a 0.6 m/s (sin visión, 18 cm de desvío) |
+| **Estudio de caídas** | **1300 caídas** (13 políticas, 100 por política, 7 causas distintas) en simulación: el **hombro** y la **cadera pitch** son lo que más sufre, el **tropiezo** es la peor causa y soltar los motores no protege brazos ni cabeza. Ver [💥 Caídas](#-caídas-cómo-sufre-cada-articulación) |
 | **Registro completo** | [`bitacora.txt`](bitacora.txt): cada decisión, error y fallo (base para el paper) |
 
 ---
@@ -299,6 +300,95 @@ los resúmenes `rl/runs/resumen_*.md`.
 
 ---
 
+## 💥 Caídas: cómo sufre cada articulación
+
+Para cada política entrenada (las 13: las de este repo y las de Camilo, `CamiloGomezB/nao-v6-rl-race`) se simularon
+**100 caídas**, cada una provocada por una causa distinta. Salieron **1300 caídas** de 1879 simulaciones; en 111 casos el
+robot **resistió** la perturbación y no cayó. Para cada caída se midió qué carga recibió cada articulación, a qué velocidad
+se movió y con qué fuerza golpeó su tope, y se marcó como **crítica** cuando pasa de lo que el motor aguanta.
+
+![Tropiezo con v06d: el hombro llega a 6.9 veces su par de parada](media/caidas/01_v06d_tropiezo_id38.gif)
+
+*Una de las 10 peores caídas de este repo (tropiezo con `v06d`). Las barras de la derecha son la carga de cada articulación
+frente a lo que su motor aguanta.*
+
+### Cómo se simuló
+
+| | |
+|:--|:--|
+| **Causas (7, rotando)** | empujón, golpe en el torso, tropiezo, resbalón, motor muerto, motores débiles, retraso |
+| **Intensidad** | la perturbación sube ×1.5 hasta 3 veces; si el robot aguanta las tres, se cuenta como *resistió* |
+| **Caída** | torso inclinado más de 35° o altura de la cadera bajo 0.22 m |
+| **Dos casos tras caer (1.5 s)** | **activo** (el robot sigue empujando) y **protegido** (motores casi sueltos) |
+| **Carga en la articulación** | fuerza externa sobre cada articulación (promedio móvil de 20 ms), contra el par de parada de su motor |
+| **Crítico** | carga mayor que el par de parada (**sobrecarga**), velocidad mayor que la del motor (**sobrevelocidad**) o más de 2 N·m contra el tope (**golpe al tope**) |
+| **Semillas** | `10000 + k`, fijas; el resultado no depende de cuántos procesos se usen |
+
+### Qué le pasa a cada articulación
+
+![Sobrecarga, sobrevelocidad y golpe al tope por articulación, activo y protegido](media/caidas/articulaciones.png)
+
+| Articulación | Qué le pasa | Cuándo es crítico |
+|:--|:--|:--|
+| **Hombro (pitch)** | Es lo primero que toca el piso: recibe **2.5–2.8× su par de parada** | Sobrecarga en **85 %** de las caídas (**94 %** con motores sueltos) |
+| **Codo (roll)** | Se dobla al apoyar el cuerpo sobre la mano | Sobrecarga en **53 %** |
+| **Cadera (pitch)** | Sostiene al robot cuando el torso se va hacia adelante | Sobrecarga en **57 %** |
+| **Rodilla** | Se flexiona rápido al perder el equilibrio | Sobrevelocidad en **70 %** |
+| **Tobillo (pitch)** | Choca con su tope al soltarse | Golpe al tope en **46 %** con motores sueltos |
+| **Tobillo (roll)** | Se mueve más rápido que su motor al inclinarse de lado | Sobrevelocidad en **81 %** |
+| **Cabeza** | Toca primero en **10 %** de las caídas; el golpe mediano es de **6.1× el peso** del robot | En el 5 % peor llega a ~**11×** |
+
+**Hallazgo principal:** soltar los motores al caer **ayuda a las piernas** (la sobrecarga en una pierna baja de **77 % a
+42 %**), pero **no protege los brazos ni la cabeza**, que siguen igual de cargados. Es decir, apagar todo no es una postura
+protectora: falta una que recoja los brazos (ver *Siguientes pasos*).
+
+### Qué causa pesa más y cómo se comparan las políticas
+
+![Severidad por causa y porcentaje de caídas con sobrecarga por política](media/caidas/causas_y_politicas.png)
+
+- **Tropiezo: la peor.** Cae en **0.19 s** hacia adelante, **98 %** de las veces con sobrecarga en una pierna y con la
+  cabeza como primer apoyo más a menudo que con cualquier otra causa (26 % de las caídas). Le siguen el resbalón (cuando
+  logra tirar al robot) y el golpe en el torso (cae en 0.24 s sobre una mano).
+- **Las más suaves:** motores débiles (0.93×, se cae despacio, en ~0.7 s) y motor muerto.
+- **Entre políticas:** las de este repo sobrecargan alguna pierna en **64–74 %** de las caídas (v07c es la mejor, 64 %) y
+  resisten más causas (8–17 de ~155 simulaciones). Las de Camilo, en **69–99 %** (`rl_v1.2`, entrenada castigando el
+  esfuerzo de los motores, es la mejor de las suyas con 69 %; `rl_v1.1` la peor con 99 %) y resisten 1–5 de ~130.
+- **Ojo con la comparación:** cada política se simula con el modelo de motor con que se entrenó (las de este repo, con la
+  curva par–velocidad; las de Camilo, con el tope fijo de ±5 N·m), así que parte de la diferencia viene de ahí. Con los
+  mismos motores la comparación sería justa (ver *Siguientes pasos*).
+
+Dos de las caídas más duras:
+
+![Golpe en el torso con v06: el hombro derecho llega a 6.2 veces su par de parada](media/caidas/02_v06_golpe_torso_id1.gif)
+
+![Empujón con rl_v1.0 de Camilo: el hombro derecho llega a 7.6 veces su par de parada](media/caidas/01_rl_v1.0_empujon_id14.gif)
+
+Los 10 videos de cada fuente quedan en `videos/caidas/` (no se suben a git; se regeneran con un comando).
+
+### Qué significa para el robot real
+
+1. **Los hombros son el punto débil.** Si el NAO se cae hacia adelante, el hombro recibe más de 2.5 veces lo que aguanta.
+   Conviene probar siempre con arnés o sobre un colchón.
+2. **Evitar el tropiezo** es lo que más protege: es la causa más severa y la que deja la cabeza como primer apoyo.
+3. **Soltar motores al detectar la caída** reduce el daño a las piernas; para brazos y cabeza hace falta algo más.
+4. Son resultados de simulación con piezas de choque aproximadas y piso rígido: sirven para **comparar** políticas y
+   causas, no para predecir daños absolutos.
+
+### Reproducirlo
+
+```bash
+uv run python -m demo.caidas --procesos 15                   # 100 caídas por política, en paralelo
+uv run python -m demo.caidas --verificar results/caidas/caidas.json   # vuelve a simular y compara
+uv run python -m demo.caidas_video --peores 10               # videos de las 10 peores
+uv run python -m demo.caidas_tablero                         # datos de la pestaña Caídas del tablero
+uv run python -m demo.caidas_figuras --gifs                  # figuras y GIF de este README
+```
+
+Resultados con comando, versiones y SHA-256 de cada política en [`results/caidas/`](results/caidas/); tablero en
+[`docs/index.html`](docs/index.html); detalle en la [bitácora](bitacora.txt), entradas [58]–[59].
+
+---
+
 ## ❌ Lo que no funcionó (y cómo se arregló)
 
 | Problema | Causa | Solución |
@@ -360,6 +450,13 @@ los resúmenes `rl/runs/resumen_*.md`.
 | `rl/noches/` | Listas de corridas de cada noche |
 | `rl/runs/` | Solo los archivos livianos de cada corrida: `config.json`, `progreso.csv`, `evaluacion.csv` y resúmenes |
 | `rl/politicas/` | Políticas elegidas: `nao_v01b_s0`, `nao_v01c_s0`, `nao_v01d_s0`, `nao_v01e_s0`, `nao_v02r_s0`, `nao_v04_s0`, `nao_v02_s9_44M`, `nao_v05c_s0`, `nao_v05d_s0` y **`nao_v06_s0`** |
+| `demo/caidas.py` | Motor de caídas (7 causas, 100 por política) para las políticas de Daniel y de Camilo; en paralelo y con verificación de reproducibilidad |
+| `demo/caidas_video.py` | Videos de las N peores caídas (vista 3D + barras de carga por articulación) |
+| `demo/caidas_tablero.py` | Convierte los resultados en los datos de la pestaña *Caídas* del tablero |
+| `demo/caidas_figuras.py` | Genera las figuras y los GIF de este README → `media/caidas/` |
+| `results/caidas/` | `caidas.json` (Daniel) y `caidas_camilo.json` (Camilo), con comando, versiones y SHA-256 |
+| `media/caidas/` | Figuras y GIF del estudio de caídas |
+| [`docs/index.html`](docs/index.html) | Tablero (GitHub Pages) con la pestaña *Caídas* |
 | [`bitacora.txt`](bitacora.txt) | Bitácora de todo el proceso |
 
 ---
@@ -386,6 +483,8 @@ bash cola_noche.sh noches/noche_02.txt                   # cola + evaluacion + r
 bash cola_noche.sh --parar                               # detenerla sin que el vigilante la relance
 ```
 
+Estudio de caídas (CPU, en Windows o Ubuntu; desde la raíz del repo): ver [💥 Caídas](#reproducirlo).
+
 ---
 
 ## 🔜 Siguientes pasos
@@ -397,5 +496,7 @@ bash cola_noche.sh --parar                               # detenerla sin que el 
 4. Empujones más fuertes en el entrenamiento (sigue siendo la debilidad: 4–5/8).
 5. **Hacia el robot real:** exportar la política a numpy (Python 2.7 a bordo, sin torch), medir la latencia real y
    medir la cámara real en posiciones conocidas para reemplazar el modelo de error por números medidos.
-6. Mejoras pendientes de las herramientas: el resumen debe saltar corridas cortadas y de `--prueba`;
+6. **Caídas:** simular la postura protectora (brazos al pecho, motores sueltos) como tercer caso, y usar un
+   mismo modelo de motor para comparar de forma justa las políticas de Daniel y de Camilo.
+7. Mejoras pendientes de las herramientas: el resumen debe saltar corridas cortadas y de `--prueba`;
    `ver_politica.py` dice "(sin visión)" aunque la use; agregar el tiempo en 10 m a la evaluación.
