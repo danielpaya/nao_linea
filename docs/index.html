@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Esfuerzo de motores NAO</title>
+  <meta name="description" content="Cuanto se esfuerzan los motores del NAO V6 con las politicas de caminata por RL (Copa NAO CCM MX 2026).">
+  <link rel="stylesheet" href="tablero/tema.css">
+  <link rel="stylesheet" href="tablero/pagina.css">
+</head>
+<body>
+  <div id="dash-root">
+    <div class="barra"><button type="button" id="tema">Tema oscuro</button></div>
+    <div class="ef">
+      <header id="encabezado" style="display:flex;flex-direction:column;gap:var(--cds-gap-sm)">
+        <h1>Esfuerzo de los motores del NAO</h1>
+        <p class="lead" id="conclusion">
+          El motor de pierna más exigido es <b data-source="peor" data-field="motor" class="dash-skeleton">—</b> en la política
+          <b data-source="peor" data-field="politica" class="dash-skeleton">—</b>, con un par RMS del
+          <b class="num dash-skeleton" data-source="peor" data-field="calor_pct">—</b>&nbsp;% de su par continuo.
+          Motores de pierna por encima del 80&nbsp;%: <b class="num dash-skeleton" data-source="peor" data-field="sobre_80">—</b> de
+          <b class="num dash-skeleton" data-source="peor" data-field="total">—</b>.
+          Lo que más se repite es la rodilla pidiendo más par del que da el motor simulado.
+        </p>
+        <p class="sub">Simulación de la carrera de 5 m con cada política (salida centrada, sin empujones, fricción nominal, visión simulada), registrando cada motor cada 2 ms y comparándolo con los datos del motor real del NAO.</p>
+      </header>
+
+      <section class="tiles" id="cifras">
+        <div class="tile"><span class="k">Más rápida en 5 m</span>
+          <span class="v"><span data-source="rapida" data-field="t_5m" class="dash-skeleton">—</span> s</span>
+          <span class="n">política <span data-source="rapida" data-field="politica">—</span></span></div>
+        <div class="tile"><span class="k">Motor de pierna más caliente</span>
+          <span class="v"><span data-source="peor" data-field="calor_pct" class="dash-skeleton">—</span> %</span>
+          <span class="n">par RMS ÷ par continuo · límite de diseño 80 %</span></div>
+        <div class="tile"><span class="k">Rodilla en el tope del motor simulado</span>
+          <span class="v"><span data-source="rodilla" data-field="tope_pct" class="dash-skeleton">—</span> %</span>
+          <span class="n">del tiempo · <span data-source="rodilla" data-field="motor">—</span> en <span data-source="rodilla" data-field="politica">—</span></span></div>
+        <div class="tile"><span class="k">Golpe máximo de un pie</span>
+          <span class="v"><span data-source="impacto" data-field="impacto_pico" class="dash-skeleton">—</span> × peso</span>
+          <span class="n">política <span data-source="impacto" data-field="politica">—</span></span></div>
+      </section>
+
+      <section class="card" id="mapa-calor">
+        <h2>Calor de cada motor de pierna, por política</h2>
+        <p class="note">Par RMS ÷ par continuo del motor real. Por encima de 80 % (rojo) el motor se calentaría en una carrera larga. Los brazos no tienen dato de par continuo.</p>
+        <div class="chart" id="heat" data-source="motores" style="min-height:300px"></div>
+      </section>
+
+      <section style="display:flex;flex-direction:column;gap:var(--cds-gap-sm)" id="detalle">
+        <h2>Detalle de una política</h2>
+        <nav class="pols" id="selector" data-source="resumen" aria-label="Elegir política"></nav>
+        <div class="polline" id="linea-politica">
+          <span>Tiempo en 5 m <b class="num" id="lp-t" data-source="resumen" data-field="t_5m">—</b> s</span>
+          <span>Energía <b class="num" id="lp-e" data-source="resumen" data-field="energia_j_m">—</b> J/m</span>
+          <span>Golpe del pie p99 <b class="num" id="lp-i" data-source="resumen" data-field="impacto_p99">—</b> × peso</span>
+          <span>Separación mínima entre pies <b class="num" id="lp-s" data-source="resumen" data-field="separacion_min_cm">—</b> cm</span>
+        </div>
+      </section>
+
+      <section class="card" id="par-tiempo">
+        <h2>Par de la pierna izquierda durante la carrera</h2>
+        <p class="note">De los 3 a los 7 s (marcha ya lanzada). Punteado: par continuo del motor real (2.33 N·m). Línea fina: tope del motor simulado (5 N·m).</p>
+        <div class="chart" id="serie-chart" data-source="serie" style="min-height:260px"></div>
+      </section>
+
+      <div class="grid2">
+        <section class="card" id="tope">
+          <h2>Tiempo en el tope del motor simulado</h2>
+          <p class="note">La política pide más par del que el motor simulado le da (5 N·m en piernas, menos al girar rápido).</p>
+          <div class="chart" id="tope-chart" data-source="motores" style="min-height:360px"></div>
+        </section>
+        <section class="card" id="velocidad">
+          <h2>Velocidad usada (p99) frente a la máxima del motor</h2>
+          <p class="note">Por encima de 100 % el motor real no alcanzaría el movimiento pedido.</p>
+          <div class="chart" id="vel-chart" data-source="motores" style="min-height:360px"></div>
+        </section>
+      </div>
+
+      <section class="card" id="tabla-motores">
+        <h2>Todos los motores de la política elegida</h2>
+        <div class="tablebox">
+          <table id="tm" data-source="motores" data-row-key="politica,motor">
+            <thead><tr>
+              <th data-field="motor">Motor</th><th data-field="tipo">Tipo</th><th data-field="calor">Calor</th>
+              <th data-field="sobre_continuo">Sobre el continuo</th><th data-field="tope_sim">En el tope sim.</th>
+              <th data-field="fuera_curva">Fuera de la curva</th><th data-field="vel_p99">Vel. p99 (rad/s)</th>
+              <th data-field="w_max">Vel. máx. motor</th><th data-field="cerca_tope">Cerca del tope articular</th>
+              <th data-field="par_rms">Par RMS (N·m)</th><th data-field="par_max">Par máx. (N·m)</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="tabla-politicas">
+        <h2>Comparación entre políticas</h2>
+        <div class="tablebox">
+          <table id="tp" data-source="resumen" data-row-key="politica">
+            <thead><tr>
+              <th data-field="politica">Política</th><th data-field="vx">Comando (m/s)</th><th data-field="vision">Visión</th>
+              <th data-field="t_5m">Tiempo 5 m (s)</th><th data-field="metas">Metas</th><th data-field="energia_j_m">Energía (J/m)</th>
+              <th data-field="calor_max">Calor máx.</th><th data-field="motor_mas_caliente">Motor más caliente</th>
+              <th data-field="tope_rodilla">Rodilla en tope</th><th data-field="impacto_pico">Golpe pico (× peso)</th>
+              <th data-field="separacion_min_cm">Separación mín. (cm)</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="grid2">
+        <section class="card" id="motores-reales">
+          <h2>Datos del motor real usados</h2>
+          <p class="note">Valores en la articulación (motor × reductora), de la documentación de motores de Aldebaran. El PDF del V6 no se pudo leer: tomar como aproximados.</p>
+          <div class="tablebox">
+            <table id="tref" data-source="referencia" data-row-key="tipo">
+              <thead><tr>
+                <th data-field="tipo">Motor</th><th data-field="articulaciones">Articulaciones</th><th data-field="reductora">Reductora</th>
+                <th data-field="par_parada">Par de parada (N·m)</th><th data-field="par_continuo">Par continuo (N·m)</th><th data-field="w_max">Vel. máx. (rad/s)</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="card" id="metodo">
+          <h2>Cómo leer cada medida</h2>
+          <dl class="defs">
+            <dt>Calor</dt><dd>Par RMS ÷ par continuo. El calor crece con el cuadrado de la corriente, y la corriente es proporcional al par.</dd>
+            <dt>Sobre el continuo</dt><dd>Fracción del tiempo con el par por encima del que el motor aguanta sin calentarse.</dd>
+            <dt>En el tope simulado</dt><dd>Fracción del tiempo con el par en el límite del motor simulado: la política pide más de lo que recibe.</dd>
+            <dt>Fuera de la curva</dt><dd>Par mayor que par de parada × (1 − velocidad ÷ velocidad máxima): un motor real no podría darlo.</dd>
+            <dt>Cerca del tope articular</dt><dd>A menos de 3° del límite de la articulación: riesgo de golpe mecánico.</dd>
+            <dt>Golpe del pie y energía</dt><dd>Fuerza de cada pie contra el piso ÷ peso del robot. Energía: suma de |par × velocidad| por metro recorrido.</dd>
+          </dl>
+        </section>
+      </div>
+
+      <section class="card" id="limitaciones">
+        <h2>Limitaciones</h2>
+        <ul class="lim">
+          <li>Es una estimación desde la simulación. El motor simulado es un control PD con tope de par; el servo real del NAO no se comporta igual.</li>
+          <li>El par continuo es una cota superior: no incluye la eficiencia de la reductora, así que el motor real se calienta algo antes. Por eso conviene dejar margen bajo el 80 %.</li>
+          <li>El entrenamiento usó 4.53 rad/s como velocidad máxima de los motores tipo 1; la tabla nueva dice 4.16 rad/s. Por eso los tobillos (roll) salen a veces fuera de la curva.</li>
+          <li>No se simula la temperatura. Falta validar en el robot real midiendo corriente y temperatura de cada motor.</li>
+          <li>La simulación corre en MuJoCo normal con las políticas exportadas a numpy; los tiempos coinciden con la evaluación en MJX con una diferencia de unas décimas.</li>
+        </ul>
+      </section>
+    </div>
+  </div>
+  <script src="tablero/d3.min.js"></script>
+  <script src="tablero/dash.js"></script>
+  <script src="tablero/tablero.js"></script>
+</body>
+</html>

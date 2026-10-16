@@ -752,3 +752,200 @@ Cambios en README.md: estado v06 10.9 s con vision; motores reales (tabla de lim
   comandos para reproducir la cadena v04 -> v06; siguientes pasos.
   Fuentes: entradas [33]-[44]. Se quito una fila "se saldria" que mezclaba valores nominales y de la peor condicion.
 Pendiente: copiar a rl/politicas/ nao_v05c_s0, nao_v05d_s0 y nao_v06_s0 (el README ya las lista).
+
+=== [46] 2026-10-14 22:15 · Noche 5: apagones de camara (v07a), + giroscopio (v07b), centrado estrecho (v07c), vision a 0.6 (v06d) ===
+Decision (aprobada por el usuario, plan completo): atacar los dos hallazgos de [44] y probar la vision a 0.6 m/s.
+Que se hizo:
+  - nao_carrera.py (config vision; por defecto todo apagado, las generaciones anteriores no cambian):
+    apagones = True: en cada paso, si no hay apagon, empieza uno con probabilidad 0.003 (~1 cada 8 s) y dura 0.5-2 s;
+      durante el apagon no se publican cuadros (la observacion se queda con el ultimo). Se agrega vis_edad a la
+      observacion (s desde el ultimo cuadro nuevo, recortado a 2 s): el detector real sabe cuando perdio la linea.
+    giroscopio = True: ademas de psi y d, la politica ve el error de rumbo del giroscopio (rumbo deseado - rumbo
+      integrado con deriva de hasta 0.005 rad/s), como v01b-v05d. Arranca igual a psi0 (sale con el carril chueco).
+  - entrenar.py: 4 generaciones nuevas (23 en total, sin claves repetidas, verificado con ast):
+    nao_v07a = v06 + apagones (desde v06 s0). Hipotesis: aprende a no fiarse de un cuadro viejo; sin giroscopio,
+      mejora poco en apagones largos.
+    nao_v07b = v07a + giroscopio (desde v06 s0, no desde v07a, para correr esta noche; difiere de v07a solo en el
+      giroscopio). Hipotesis: mantiene el rumbo durante el apagon y no se sale.
+    nao_v07c = v06 + sigma_carril 0.01 -> 0.0025 m^2 (desde v06 s0, 60 M). Hipotesis: quita el sesgo de ~4-5 cm (en
+      d = 4.5 cm el premio baja de 0.82 a 0.45).
+    nao_v06d = v05d + vision + seguir_carril (desde v05d s0). Hipotesis: ~9.5 s y centrada.
+  - rl/noches/noche_05.txt: v07b, v07a (120 M), v07c (60 M), v06d (120 M) -> ~6 h + evaluacion.
+Pruebas en CPU (sesion del asistente):
+  - etiquetas = tamano de la observacion en las 4 (actor 171 / 174 con edad / 177 con edad y giroscopio).
+  - trasplante v06 -> v07b: misma accion (diferencia 0.0) con las entradas nuevas en 0.
+  - 150 pasos de v07b con apagon_prob 0.05 (solo para la prueba): los apagones congelan psi y d, vis_edad sube de
+    0 a ~1.8 s y vuelve a 0 al llegar un cuadro nuevo; el error del giroscopio sigue al psi real con 1-2 grados de
+    diferencia en ~3.6 s (deriva + integracion); sin NaN ni caidas.
+Cautelas: evaluar.py corre con la configuracion de cada corrida, asi que las v07a/b se evaluan CON apagones y v06 SIN
+  ellos (no son del todo comparables). Para compararlas falta un modo "apagon" en validar_vision.py (manana).
+
+=== [47] 2026-10-15 07:30 · Noche 5 evaluada: v06d 9.6 s centrada, v07c quita desvio, v07a/b sin perder nada con apagones ===
+Ejecucion (log de la cola noches/noche_05.txt, 22:17 -> 04:53, sin cortes): v07b 98.4 min, v07a 96.1, v07c 55.4,
+  v06d 96.9; trasplantes correctos (171->177, 171->174, ninguno, 168->171). Resumen: runs/resumen_20261015_0453.md.
+Entrenamiento (recompensa de evaluacion inicial -> final; no comparable entre generaciones con recompensa distinta):
+  v07b 98.7 -> 99.4, v07a 98.8 -> 102.8, v07c 94.2 -> 101.3, v06d 84.9 -> 97.4 (duracion 924 -> 963).
+Evaluacion (evaluar.py, 11 condiciones x 8; salida recta; v07a/b CON apagones aleatorios, v06 sin ellos):
+                 t nominal  desvio nom  retraso 3         empujon 0.45     metas fuera nom.  se sale (vision)
+  v06 s0 [40]    10.9 s     6.8 cm      8/8 12.1 s        5/8              77/80             0/8 en todo
+  v07a           11.1 s     6.0         8/8 12.2 s 5.2    6/8 (2 caidas)   78/80             1/8 empujon 0.45
+  v07b           11.0 s     5.2         8/8 12.3 s 5.6    6/8 (2 caidas)   78/80             0/8 en todo
+  v07c (60 M)    10.9 s     2.7         8/8 12.2 s 3.0    5/8 (3 caidas)   77/80             0/8 en todo
+  v06d (0.6)      9.6 s     2.8         8/8 10.8 s 11.3   5/8 (3 caidas)   77/80             0/8 en todo
+  v07c: desvio max de 2.5-3.2 cm en las 10 condiciones sin empujon fuerte (v06: 3.7-10 cm).
+  v06d: 9.5-9.8 s en todas las condiciones salvo retraso 3 (10.8 s).
+Interpretacion:
+  - v07c: hipotesis confirmada en esta prueba: el desvio maximo baja a la mitad (6.8 -> 2.7 cm) sin perder tiempo.
+    Falta ver con validar_vision.py si desaparece el sesgo de -4.5 cm al final (evaluar.py mide el desvio maximo).
+  - v06d: hipotesis confirmada: 9.6 s, centrada (2.8 cm, mas que v06) y tan robusta como v06 (77/80). La vision
+    tambien corrigio el desvio de 18 cm de v05d.
+  - v07a/b: con apagones aleatorios en la evaluacion no pierden nada respecto a v06 (78/80, ~11 s, 5-6 cm). La
+    diferencia entre ellas (el giroscopio) solo se puede ver con un apagon largo y controlado: falta el modo apagon
+    en validar_vision.py.
+  - Debilidad comun: empujon de 0.45 m/s (5-6/8, 2-3 caidas).
+Una sola semilla por generacion.
+
+=== [48] 2026-10-15 07:55 · validar_vision.py: apagon controlado (2 s y 4 s) y sesgo medido aparte ===
+Objetivo: ver si el giroscopio de v07b sirve cuando la camara se pierde, en las mismas condiciones para todas.
+Que se hizo (rl/validar_vision.py):
+  - 2 modos nuevos: apagon_2s y apagon_4s. A los 2.4 s de carrera psi y d se congelan en el ultimo valor durante 2 s
+    (lo entrenado en v07a/b) o 4 s (mas de lo entrenado); si la politica ve vis_edad, esta sube (duracion + 0.05 s,
+    aproximacion). El giroscopio de v07b sigue vivo. Se aplica a la observacion (h0), como el sabotaje.
+  - En toda la validacion se desactivan los apagones al azar del entrenamiento (apagon_prob = 0), para comparar v06,
+    v07a/b/c y v06d igual.
+  - CAMBIO DE CRITERIO: el chequeo "se recentra" comparaba d final contra 0, y en [44] marco FALLA por el sesgo y no
+    por falta de correccion. Ahora: (1) chequeo aparte del sesgo = d final medio de la salida centrada (< 3 cm);
+    (2) se recentra si (d final - sesgo) quedo a menos de la mitad de d0, hacia el lado correcto. El resultado de
+    [44] no se toca; las corridas nuevas usan el criterio nuevo.
+  - Veredicto nuevo: apagon de 2 s con 0 salidas = OK/FALLA; apagon de 4 s solo informativo.
+Error encontrado en la prueba: los apagones no se aplicaban (resultados identicos al modo normal) porque el argumento
+  "fin" del apagon tenia el mismo nombre que la bandera "fin" (carrera terminada) dentro del scan; se renombro a
+  fin_ap. Despues: con la politica de prueba, el apagon de 4 s produce 2/7 salidas y el de 2 s 0/7 (el modo funciona).
+Siguiente: correr la validacion de v06 s0, v07a, v07b, v07c y v06d en la GPU.
+
+=== [49] 2026-10-15 11:40 · ver_politica.py: carril dibujado, salida torcida y camara de pista (para mostrar) ===
+Motivo: presentacion del equipo; el carril es virtual y no se veia en el video ni en el visor.
+Que se hizo (rl/ver_politica.py):
+  - Dibuja el carril (bordes a +-35 cm, linea central gris, salida blanca, meta roja) en el video y en el visor
+    (--vivo). Es solo dibujo (mjv_initGeom en la escena), no cambia la fisica ni el modelo.
+  - --salida D0_CM PSI0_GRADOS: sale corrido y/o girado respecto al carril, igual que validar_vision.py (con vision la
+    politica lo ve desde el primer cuadro; sin vision no se entera). Las medidas ahora son en el marco del carril:
+    avance, |d| max, d final, torcido respecto al carril y si se sale.
+  - --camara sigue (detras y a un lado del robot) o pista (fija, desde atras y arriba, se ven los 5 m).
+  - Se recalcula la primera observacion despues de fijar la salida; el texto final dice "con vision simulada" o
+    "sin vision" segun la politica (antes siempre decia "sin vision", pendiente de [41]).
+  - Video: carrera.mp4, o carrera_d+10_psi-8.mp4 / ..._pista.mp4 segun la salida y la camara. 960 x 540.
+Prueba (CPU, politica de prueba, --salida 10 -8): llega en 11.1 s, d final -0.8 cm; se revisaron cuadros de las dos
+  camaras (el angulo de ambas se corrigio dos veces hasta que el carril completo y el robot quedaran a la vista).
+
+=== [50] 2026-10-15 12:10 · rl/vivo.py: carrera en vivo cambiando de politica (para la presentacion) ===
+Pedido del usuario: ver el robot en vivo con las politicas actuales y poder cambiar entre la de ~9.6 s (v06d),
+  ~11 s (v06) y ~11.3 s (v05c) sin cerrar nada. La demo de 3 robots del 9 de octubre (demo/caminatas/carrera_vivo.py)
+  usa la politica vieja de Camilo (SB3, CPU, Windows); la nueva corre en JAX/MJX en WSL.
+Que se hizo: rl/vivo.py. Compila todas las politicas al arrancar (~1 min cada una) y abre el visor de MuJoCo con el
+  carril dibujado (dibujar_pista de ver_politica.py). Se controla desde la terminal (un hilo lee la entrada; asi no
+  choca con los atajos de teclado del visor): 1..9 politica, r repetir, s salida (centrada / 10 cm afuera izq. y der. /
+  20 cm / 15 grados), v vision encendida/apagada (psi y d en 0, toda la historia), p pausa, q salir. Tiempo real,
+  vuelve a salir sola 3 s despues de la meta o la caida; texto en pantalla con tiempo, avance y distancia al centro.
+  Apagones al azar desactivados en la demo. Sin vision (v05c), la salida torcida no se le comunica (como el real).
+Prueba (CPU, sin pantalla): compila la clase Corredor (56 s), salida 10 cm / -8 grados, apagar la vision pone en 0 las
+  6 entradas de psi y d, 50 pasos sin caerse. El visor no se pudo probar aqui (sin pantalla): pendiente que el
+  usuario lo pruebe en WSL.
+Pendiente (sim-to-real y demo de 3 robots): exportar la red a numpy para correr en CPU / Python 2.7.
+
+=== [51] 2026-10-15 12:30 · ver_politica.py y vivo.py dibujan la pista de la demo de la rama main ===
+Pedido del usuario: que se vea como la demo de main (duela, lineas negras, meta roja), no el piso de cuadros.
+Que se hizo: escena_pista() carga nao_assets/scene_carril.xml (la pista de demo/build_scene.py: duela con veta,
+  lineas de 1.9 cm, carriles vecinos, franja de salida y meta roja a 5 m) SOLO para dibujar, si existe y tiene las
+  mismas articulaciones que el modelo de MJX (31 qpos, 25 articulaciones: se verifico que coinciden). La fisica sigue
+  en MJX; en cada paso se copia la pose. Como en esa pista el carril es fijo (a lo largo de +x), a_pista() lleva la
+  pose del robot al marco del carril (gira -psi0 y corre d0), asi la salida torcida se ve torcida sobre la pista.
+  Si no existe la escena, se usa el carril dibujado de [49]; --carril-simple lo fuerza.
+Prueba (CPU, politica de prueba, --salida 10 -8, camaras sigue y pista): se revisaron cuadros; el robot sale corrido
+  sobre la franja negra, recorre el carril y llega a la meta roja.
+
+=== [52] 2026-10-15 13:10 · Demo en vivo con las politicas nuevas, con el panel de main (demo/rl_vivo.py + rl/exportar.py) ===
+Problema con [50]/[51]: rl/vivo.py corria en WSL (visor por WSLg sobre escritorio remoto y un solo robot en MJX en la
+  GPU, un paso a la vez): muy lento; sin botones (control por terminal) y sin la ventana de la camara. El usuario
+  pedia reutilizar la demo de main (panel con deslizadores de posicion y giro inicial, casilla de vision, Correr /
+  Detener y la ventana "Lo que ve el NAO"). Error de enfoque del asistente: se construyo algo nuevo en vez de reusar.
+Que se hizo:
+  - rl/exportar.py (WSL): politica.pkl -> rl/politicas/<gen>_s<semilla>/politica_np.npz (normalizador, capas y un
+    JSON con todo lo necesario para armar la observacion). Comprueba numpy vs JAX en 32 observaciones al azar.
+    Prueba: diferencia 5.7e-7 y 4.2e-7 (politicas de prueba de v06 y v07b). Es tambien el primer paso hacia el NAO
+    real (inferencia sin JAX).
+  - demo/rl_vivo.py (Windows, uv, como run_demo.py): misma pista (build_scene), mismo visor 3D, misma ventana de
+    camara y mismo estimador de carril (carril/: LaneEstimator + LaneFilter con odometria), reutilizando CameraWindow
+    y Desplegable de run_demo.py. El panel cambia la fila de colores por una lista de POLITICAS. Fisica en MuJoCo
+    normal (CPU) con el MISMO modelo del entrenamiento (assets/nao/scene.xml con solo pies y piso chocando, 4/8
+    iteraciones: se verifico que coincide con scene_mjx.xml en nq, nu, masas, friccion, kp, forcerange y keyframe) y
+    los limites reales de los motores por subpaso. Observacion igual a NaoCarrera (giroscopio, inclinacion, angulos,
+    velocidades, accion anterior, comando, fase, psi/d de la camara, edad y giroscopio si la politica los usa,
+    historia de 3). Vision a 10 Hz con 1 cuadro de retraso; si el estimador no ve lineas, el cuadro se pierde.
+    psi de la politica = -psi del estimador (convenciones opuestas). Sin vision: psi = d = 0.
+    --prueba N: sin ventanas, N carreras por politica (para revisar).
+Pruebas (sesion del asistente, CPU, politica de prueba = v05c trasplantada a la observacion de v06):
+  - vision simulada, salida centrada: META en 10.9 s (en MJX esa misma politica hizo 11.1 s): la caminata se
+    transfiere de MJX a MuJoCo normal.
+  - camara + estimador, salida 12 cm / +8 grados: META en 11.1 s; corrige el rumbo hacia el lado correcto (sin
+    correccion habria salido ~80 cm); estimacion de la vision -18.9 cm vs real -18.8 cm al final.
+  - Panel (matplotlib Agg): se construye, la lista de politicas cambia la politica, la carrera muestra la camara con
+    las lineas detectadas y "LLEGO A LA META en 11.0 s". El visor 3D no se pudo abrir aqui (sin pantalla).
+  - Velocidad: 2 carreras de ~12 s (sin ventanas) en 24 s de reloj incluyendo el arranque: sobra para tiempo real.
+
+=== [53] 2026-10-15 19:45 · Depuracion de lo que se hizo hoy para ver la simulacion ===
+Decision del usuario: quitar lo innecesario. Queda lo que sirve: demo/rl_vivo.py (panel de main con las politicas
+  nuevas), rl/exportar.py (numpy, tambien para el NAO real) y validar_vision.py con los apagones.
+  - rl/vivo.py: BORRADO (visor por terminal en WSL, lento; lo reemplaza demo/rl_vivo.py). Entradas [50]-[51] quedan
+    como historia.
+  - rl/ver_politica.py simplificado: se quitan el carril dibujado a mano (dibujar_pista), --carril-simple y
+    --camara pista. Queda: video sobre la pista de la demo si existe nao_assets/scene_carril.xml (si no, piso del
+    entrenamiento), --salida D0 PSI0, --vivo y las medidas en el marco del carril.
+Prueba (CPU, politica de prueba, --salida 10 -8): META en 11.1 s, video escrito.
+
+=== [54] 2026-10-15 20:15 · Analisis de esfuerzo de los motores (demo/esfuerzo.py) y tablero ===
+Pedido: ver cuanto se esfuerzan los motores con las mejores politicas, con el metodo que uso Camilo en su rama
+  (datos del motor real, registro cada 2 ms, calor = par RMS / par continuo, etc.) y un tablero.
+Que se hizo:
+  - demo/esfuerzo.py: misma simulacion que demo/rl_vivo.py (MuJoCo normal, mismo modelo y limites que el
+    entrenamiento, vision simulada con el ruido del entrenamiento, salida centrada, sin empujones, friccion nominal),
+    5 carreras por politica (semilla 1000 sin ruido de postura; las demas con +-0.05 rad como el reset). En cada paso
+    de 2 ms: par de cada motor, velocidad (antes y despues del paso), posicion, tope de par del motor simulado y
+    fuerza de cada pie. Salida results/esfuerzo/esfuerzo.json.
+  - Motor real (tabla de Camilo): tipo 5 (HipPitch, KneePitch, AnklePitch) parada 8.51, continuo 2.33 N m, 6.96 rad/s;
+    tipo 1 (HipYawPitch, HipRoll, AnkleRoll) parada 11.97, continuo 2.47 N m, 4.16 rad/s. OJO: el entrenamiento uso
+    4.53 rad/s para el tipo 1 (8700 rpm / 201.3); con 4.16 los tobillos roll salen 0.1-1.2 % del tiempo fuera de la
+    curva. Brazos sin par continuo (no se calcula calor).
+  - Detalle de metodo: "fuera de la curva" usa la velocidad al empezar cada paso de 2 ms (la misma con la que el
+    motor simulado limita su par); con la velocidad al final del paso los brazos salian 3-16 % fuera por desfase.
+  - Se exportaron v07a, v07b y v05d a numpy en la sesion del asistente (diferencia numpy vs JAX < 1e-6).
+Resultados (5 carreras cada una, todas llegan, 0 caidas; results/esfuerzo/esfuerzo.json):
+                 t 5 m    calor max (motor)      rodilla en tope sim.   energia   golpe pie pico
+  v06d (0.6)     9.43 s   79 % (RAnklePitch)     19 %                   44.6 J/m  3.0 x peso
+  v05d (0.6)     9.0 s    79 % (RAnklePitch)     21 %                   45.8      2.4
+  v06            10.65 s  78 % (RAnklePitch)     11 %                   44.6      2.3
+  v07c           10.62 s  75 % (RAnklePitch)     13 %                   43.4      2.4
+  v07b           10.74 s  76 % (RAnklePitch)     12 %                   44.8      2.3
+  v07a           10.88 s  68 % (RAnklePitch)     13 %                   42.7      2.3
+  v05c           10.96 s  74 % (RAnklePitch)     11 %                   47.1      2.4
+  Ningun motor de pierna pasa del 80 % en ninguna politica; el mas exigido es siempre el tobillo derecho (pitch),
+  con asimetria izquierda/derecha. Las rodillas pasan 10-21 % del tiempo en el tope de 5 N m del motor simulado (a
+  0.6 m/s casi el doble que a 0.5). Rodillas a 0.6 m/s llegan a 7.3 rad/s (> 6.96) en picos. Hombro derecho y codo
+  izquierdo pasan 12-25 % en su tope (2.15 / 2.48 N m). Tiempos en MuJoCo normal: v06d 9.43 (MJX 9.6), v06 10.65
+  (MJX 10.9), v05d 9.0 (MJX 9.4): la caminata transfiere con unas decimas de diferencia.
+Tablero: artifact "Esfuerzo de motores NAO" (mapa de calor por politica y motor, par en el tiempo, tope simulado,
+  velocidad usada, tablas por motor y por politica, datos del motor real, metodo y limitaciones).
+Limitaciones: servo simulado = PD con tope; par continuo es cota superior (sin eficiencia de la reductora); sin
+  temperatura; una semilla de entrenamiento por politica; falta validar con corriente y temperatura en el robot.
+
+=== [55] 2026-10-15 20:30 · Tablero de esfuerzo como pagina estatica para GitHub Pages (docs/) ===
+Pedido: el mismo tablero en el repo, en HTML/CSS/JS, para publicarlo con GitHub Pages; afuera solo el HTML.
+Que se hizo: docs/index.html + docs/tablero/ (tema.css con los mismos colores, tamanos y espacios del tablero de
+  Claude, claro y oscuro; pagina.css y tablero.js = la misma pagina; dash.js = reemplazo minimo de la API del tablero
+  que carga docs/tablero/datos/*.json; d3.min.js v7.9.0 local, sin depender de internet). docs/.nojekyll.
+  Diferencias con el tablero de Claude: sin la barra de "Fuentes" del tablero; letra del sistema (la de Claude no es
+  publica); boton de tema claro/oscuro. Los datos son los de results/esfuerzo/esfuerzo.json ([54]).
+Prueba (Chromium sin pantalla, servidor local): claro y oscuro a 1300 px y oscuro a 420 px: sin errores en consola y
+  sin desborde horizontal; mapa de calor con la escala de color y la leyenda, graficas y tablas completas.
+  Abrir docs/index.html con doble clic no carga los datos (el navegador bloquea fetch en file://): hace falta
+  GitHub Pages o un servidor local.
