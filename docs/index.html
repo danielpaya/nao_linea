@@ -3,15 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Esfuerzo de motores NAO</title>
-  <meta name="description" content="Cuanto se esfuerzan los motores del NAO V6 con las politicas de caminata por RL (Copa NAO CCM MX 2026).">
+  <title>Motores del NAO en la carrera</title>
+  <meta name="description" content="Esfuerzo de los motores y analisis de caidas del NAO V6 con las politicas de caminata por RL (Copa NAO CCM MX 2026).">
   <link rel="stylesheet" href="tablero/tema.css">
   <link rel="stylesheet" href="tablero/pagina.css">
+  <link rel="stylesheet" href="tablero/caidas.css">
 </head>
 <body>
   <div id="dash-root">
-    <div class="barra"><button type="button" id="tema">Tema oscuro</button></div>
-    <div class="ef">
+    <div class="barra">
+      <nav class="pestanas" aria-label="Secciones">
+        <button type="button" data-pag="esfuerzo" aria-pressed="true">Esfuerzo en la carrera</button>
+        <button type="button" data-pag="caidas" aria-pressed="false">Caídas</button>
+      </nav>
+      <button type="button" id="tema">Tema oscuro</button>
+    </div>
+    <div class="ef" id="pag-esfuerzo">
       <header id="encabezado" style="display:flex;flex-direction:column;gap:var(--cds-gap-sm)">
         <h1>Esfuerzo de los motores del NAO</h1>
         <p class="lead" id="conclusion">
@@ -146,9 +153,132 @@
         </ul>
       </section>
     </div>
+    <div class="ef" id="pag-caidas" hidden>
+      <header style="display:flex;flex-direction:column;gap:var(--cds-gap-sm)">
+        <h1>Caídas: cómo sufre cada articulación</h1>
+        <p class="lead" id="ca-conclusion">—</p>
+        <p class="sub">Con cada política (de Daniel y de Camilo) el robot camina por la pista y, entre 1.5 y 4.5 s después de arrancar, se le provoca una caída con una causa distinta en cada simulación. Se juntaron <b id="ca-n-caidas">—</b> caídas por política. Desde que se detecta la caída (torso inclinado más de 35°) se simulan dos casos: <b>activo</b>, la política sigue moviendo los motores, y <b>protegido</b>, los motores se sueltan como hace el gestor de caídas de NAOqi.</p>
+      </header>
+
+      <section class="ca-controles" id="ca-controles">
+        <div class="ca-grupo"><span class="ca-rot">Caso</span>
+          <div class="pols" id="ca-caso">
+            <button type="button" data-caso="activo" aria-pressed="true">Activo (motores encendidos)</button>
+            <button type="button" data-caso="protegido" aria-pressed="false">Protegido (motores sueltos)</button>
+          </div></div>
+        <div class="ca-grupo"><span class="ca-rot">Política</span><div class="pols" id="ca-pol"></div></div>
+      </section>
+
+      <section class="tiles" id="ca-cifras">
+        <div class="tile"><span class="k">Caídas analizadas</span><span class="v" id="ca-t-caidas">—</span>
+          <span class="n" id="ca-t-caidas-n">—</span></div>
+        <div class="tile"><span class="k">Caídas con sobrecarga en una pierna</span><span class="v" id="ca-t-sobre">—</span>
+          <span class="n">carga en alguna articulación de pierna mayor que el par de parada de su motor</span></div>
+        <div class="tile"><span class="k">Carga máxima en piernas (mediana)</span><span class="v" id="ca-t-sev">—</span>
+          <span class="n" id="ca-t-sev-n">—</span></div>
+        <div class="tile"><span class="k">La cabeza toca primero</span><span class="v" id="ca-t-cabeza">—</span>
+          <span class="n" id="ca-t-cabeza-n">—</span></div>
+      </section>
+
+      <section class="card" id="ca-mapa">
+        <h2>Qué articulaciones sufren, por política</h2>
+        <div class="pols ca-metricas" id="ca-metrica">
+          <button type="button" data-m="sobrecarga" aria-pressed="true">Sobrecarga</button>
+          <button type="button" data-m="sobrevelocidad" aria-pressed="false">Sobrevelocidad</button>
+          <button type="button" data-m="golpe_tope" aria-pressed="false">Golpe contra el tope</button>
+        </div>
+        <p class="note" id="ca-mapa-nota">—</p>
+        <div class="chart" id="ca-heat" style="min-height:420px"></div>
+      </section>
+
+      <section class="card" id="ca-cargas">
+        <h2>Carga sobre cada articulación durante la caída</h2>
+        <p class="note">Carga externa (lo que el piso y el resto del cuerpo le imponen a la articulación, pico de 20 ms) dividida entre el par de parada de su motor. Barra: mediana de las caídas; línea: 95 % de las caídas. Por encima de 1 el motor no puede sostenerla y la reductora queda forzada.</p>
+        <div class="chart" id="ca-barras" style="min-height:420px"></div>
+      </section>
+
+      <div class="grid2">
+        <section class="card" id="ca-piezas">
+          <h2>Qué toca el piso primero</h2>
+          <p class="note">Porcentaje de caídas en que cada parte del cuerpo es la primera en tocar el piso (sin contar los pies), y fuerza del golpe en veces el peso del robot (mediana).</p>
+          <div class="chart" id="ca-piezas-chart" style="min-height:300px"></div>
+        </section>
+        <section class="card" id="ca-direcciones">
+          <h2>Hacia dónde cae</h2>
+          <p class="note">Dirección de la caída respecto al rumbo del robot.</p>
+          <div class="chart" id="ca-dir-chart" style="min-height:300px"></div>
+        </section>
+      </div>
+
+      <section class="card" id="ca-causas">
+        <h2>Causas de caída</h2>
+        <p class="note">Severidad = carga máxima en una articulación de pierna ÷ par de parada de su motor. La peor articulación es la de mayor carga relativa (mediana), contando brazos.</p>
+        <div class="tablebox">
+          <table id="ca-tcausas">
+            <thead><tr><th>Causa</th><th>Caídas</th><th>Severidad (mediana)</th><th>Severidad (95 %)</th><th>Con sobrecarga en pierna</th><th>Tiempo hasta caer</th><th>Peor articulación</th><th>Primero toca</th><th>Cae hacia</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="ca-comparacion">
+        <h2>Motores encendidos frente a motores sueltos</h2>
+        <p class="note">Por articulación: porcentaje de caídas con sobrecarga y con golpe contra el tope mecánico, en cada caso. Soltar los motores baja la sobrecarga pero deja que las articulaciones lleguen a sus topes.</p>
+        <div class="tablebox">
+          <table id="ca-tcomp">
+            <thead><tr><th>Articulación</th><th>Sobrecarga, activo</th><th>Sobrecarga, protegido</th><th>Golpe contra tope, activo</th><th>Golpe contra tope, protegido</th><th>Sobrevelocidad, activo</th><th>Sobrevelocidad, protegido</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="ca-explicacion">
+        <h2>Cómo se comporta cada articulación y cuándo se vuelve crítico</h2>
+        <div class="ca-texto">
+          <h3>Hombros (pitch) y codos (roll)</h3>
+          <p>Son los que más sufren en proporción a su motor. En casi todas las caídas una mano o un antebrazo es lo primero que toca el piso, y el peso del robot entra por el brazo: la carga en el hombro pitch suele ser 2 a 3 veces su par de parada (pasa la parada en 8 de cada 10 caídas) y en el 5 % peor llega a 4–5 veces. El codo roll pasa su parada en casi la mitad de las caídas y, con los motores sueltos, golpea su tope en una de cada seis. Es crítico en caídas hacia adelante y de lado con el brazo estirado; soltar los motores no lo evita, porque la carga viene del golpe.</p>
+          <h3>Caderas (pitch)</h3>
+          <p>Es la articulación de pierna más cargada: en 6 de cada 10 caídas pasa su par de parada con los motores encendidos, y en el peor 5 % llega a más del doble. Pasa sobre todo en tropiezos y golpes laterales, cuando la pierna queda atrás y el torso cae de golpe. También es arrastrada más rápido que la velocidad máxima de su motor en la mitad de las caídas.</p>
+          <h3>Rodillas y tobillos (pitch)</h3>
+          <p>Su carga pocas veces pasa el par de parada (rodilla en una de cada cinco caídas, tobillo casi nunca), pero en 6 o 7 de cada 10 caídas giran más rápido que lo que el motor puede (son arrastradas por el cuerpo) y en una de cada seis golpean contra su tope. Con los motores sueltos los topes se vuelven más frecuentes: el tobillo pitch golpea su tope en casi la mitad de las caídas, porque ya nada frena la articulación.</p>
+          <h3>Tobillos (roll) y caderas (roll y yaw)</h3>
+          <p>La carga es baja frente a su motor (par de parada alto, 11.97 N·m), pero su motor es lento (4.16 rad/s): el tobillo roll es arrastrado más rápido que esa velocidad en casi 8 de cada 10 caídas. El riesgo aquí es para los engranajes al ser movidos por fuera, no por la fuerza.</p>
+          <h3>Cabeza</h3>
+          <p>Toca el piso primero en una de cada diez caídas, sobre todo en tropiezos (el robot cae de frente sin tiempo de poner los brazos), con golpes de 6 a 11 veces el peso del robot. Con los motores sueltos, la cabeza pitch además golpea su tope en 4 de cada 10 caídas.</p>
+          <h3>Políticas de Daniel y de Camilo</h3>
+          <p>Con los motores encendidos, las políticas de Camilo sobrecargan alguna articulación de pierna en 69–99 % de las caídas (severidad típica 1.25–2.1 veces la parada) y las de Daniel en 64–74 % (1.07–1.19). Con los motores sueltos quedan parecidas (34–52 %). Las de Camilo resisten menos causas sin caerse (1–5 de cada ~130 simulaciones, contra 8–17 de ~155). Entre las de Camilo, la <b>rl_v1.2</b> (con el castigo de esfuerzo de motores) es la que menos sobrecarga las piernas (69 %) y la <b>rl_v1.1</b> la que más (99 %). Ojo: cada política se simula con el modelo de motor con que se entrenó (Daniel: par limitado por la curva par-velocidad; Camilo: el tope fijo del modelo), y parte de la diferencia viene de ahí.</p>
+          <h3>Situaciones más peligrosas</h3>
+          <p>El <b>tropiezo</b> es la peor causa: el robot cae hacia adelante en unos 0.2 s, casi siempre con sobrecarga en la cadera y muchas veces con la cabeza primero. Le siguen el <b>resbalón</b> (cuando logra tirarlo) y los <b>golpes laterales</b> (cae en 0.25 s sobre una mano). Las fallas de motor o el retraso hacen caídas más lentas y menos severas. Soltar los motores (protegido) baja la sobrecarga en piernas, pero deja que tobillos, rodillas y cabeza golpeen sus topes; una postura de protección (brazos recogidos, rodillas flexionadas) sería mejor que soltar todo.</p>
+        </div>
+      </section>
+
+      <section class="card" id="ca-lista">
+        <h2>Todas las caídas de la política elegida</h2>
+        <div class="tablebox">
+          <table id="ca-tlista">
+            <thead><tr><th>#</th><th>Causa</th><th>Detalle</th><th>Cae hacia</th><th>Tiempo hasta caer (s)</th><th>Primero toca</th><th>Severidad pierna</th><th>Peor articulación</th><th>Carga rel.</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="ca-limitaciones">
+        <h2>Limitaciones</h2>
+        <ul class="lim">
+          <li>Las piezas de choque del modelo son cajas y esferas aproximadas, y el piso es rígido: los valores absolutos de golpe son altos. Sirven para comparar articulaciones, causas y políticas, no para predecir un daño exacto.</li>
+          <li>La carga se toma como el pico de 20 ms; el pico instantáneo de 2 ms es más alto y está en el archivo de datos.</li>
+          <li>El motor simulado es un control PD con tope de par; el servo real y su reductora pueden reaccionar distinto a un golpe.</li>
+          <li>Cabeza, hombro roll, codo yaw y muñeca no tienen dato de motor: se reporta su carga sin compararla.</li>
+          <li>El caso protegido suelta todos los motores; el gestor de caídas real de NAOqi también puede mover los brazos a una postura de protección.</li>
+          <li>Cada política se simula con su propio modelo de motor (el de su entrenamiento), así que la comparación entre las de Daniel y las de Camilo incluye esa diferencia.</li>
+          <li>Reproducible: cada caída se repite exactamente con su semilla (<code>uv run python -m demo.caidas --verificar &lt;json&gt;</code>), en la misma versión de MuJoCo (3.14.0) y sistema; entre Windows y Linux pueden cambiar los últimos decimales.</li>
+        </ul>
+      </section>
+    </div>
   </div>
   <script src="tablero/d3.min.js"></script>
   <script src="tablero/dash.js"></script>
   <script src="tablero/tablero.js"></script>
+  <script src="tablero/caidas.js"></script>
 </body>
 </html>

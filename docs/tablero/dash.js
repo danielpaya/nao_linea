@@ -15,6 +15,8 @@
   let params = Object.assign({}, DEFECTO);
 
   function avisar() {
+    const pag = document.getElementById('pag-esfuerzo');
+    if (pag && pag.hidden) return;                       // la pestana Esfuerzo esta oculta: se dibuja al mostrarla
     oyentes.forEach((fn) => {
       try { fn(); } catch (e) { console.error(e); }
     });
@@ -56,6 +58,7 @@
     params() { return Object.assign({}, params); },
     setParams(p) { params = Object.assign({}, params, p); avisar(); },
     resetParams() { params = Object.assign({}, DEFECTO); avisar(); },
+    redibujar() { avisar(); },
     setLink(nombre) { try { history.replaceState(null, '', '#' + nombre); } catch (e) { /* sin historia */ } },
   };
   window.dash = dash;

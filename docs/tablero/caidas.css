@@ -1,0 +1,19 @@
+/* Pestanas y seccion de caidas (usa los mismos tokens del tema) */
+.barra { justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.pestanas { display: flex; gap: 4px; flex-wrap: wrap; }
+.pestanas button { font: inherit; font-size: var(--cds-font-size-body); color: var(--color-fg-muted); background: transparent;
+  border: 1px solid transparent; border-radius: var(--cds-radius); padding: 6px 12px; cursor: pointer; }
+.pestanas button[aria-pressed="true"] { color: var(--color-fg); background: var(--color-panel); border-color: var(--color-border-line); }
+.pestanas button:focus-visible { outline: 2px solid var(--color-fg); outline-offset: 2px; }
+#dash-root .ef .ca-controles { display: flex; flex-direction: column; gap: var(--cds-gap-sm); }
+#dash-root .ef .ca-grupo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cds-gap-sm); }
+#dash-root .ef .ca-rot { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); min-width: 4.5rem; }
+#dash-root .ef .ca-metricas { margin-top: 2px; }
+#dash-root .ef .ca-texto { display: block; }
+#dash-root .ef .ca-texto h3 { font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); margin: var(--cds-gap-md) 0 0; }
+#dash-root .ef .ca-texto p { margin: 4px 0 0; color: var(--color-fg-muted); font-size: var(--cds-font-size-body); line-height: 1.5; max-width: 70ch; }
+#dash-root .ef .ca-texto > h3 + p { margin-top: 2px; }
+#dash-root .ef .ca-bloque { display: flex; flex-direction: column; }
+#dash-root .ef #ca-tlista td:nth-child(3) { white-space: normal; min-width: 14rem; text-align: left; color: var(--color-fg-muted); }
+
+.ef[hidden]{display:none !important}
