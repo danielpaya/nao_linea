@@ -1147,3 +1147,103 @@ Que se hizo:
 Problema: al volver a bajar el README del PC para comprobar que no habia cambiado, se pisó la copia ya editada;
   se reescribio la seccion con los mismos numeros de [59] (nada se perdio en el PC).
 Siguiente: simular la postura protectora como tercer caso; comparar Daniel y Camilo con el mismo modelo de motor.
+
+=== [61] 2026-10-29 11:50 · Despliegue en el NAO real: se prepara la generacion nao_v08 (observacion sin velocidades, retraso 0-3, IMU con defectos) ===
+Pedido: los organizadores piden evaluar si se puede desplegar una politica propia, porque la caminata de B-Human a
+  velocidad 0.8 tarda ~40 s en el robot real (~120 mm/s medidos) y las politicas llegan a ~9-11 s en simulacion.
+  Una sesion de Claude en Ubuntu reviso el NAO por dentro (DESPLIEGUE_POLITICAS_MOVIMIENTO_NAO.txt): ciclo de motores
+  12 ms, ~36 ms de retraso (Camilo mide 48-60 ms), servo de posicion, sin velocidad de articulaciones, ONNX Runtime
+  1.10.0 (opset <= 15) en el Atom E3845.
+Brechas de v07c frente al robot real (revisadas en rl/nao_carrera.py):
+  1) La observacion del actor incluye la velocidad de cada articulacion (con ruido). El NAO solo mide angulos.
+  2) Retraso entrenado de 0-2 ciclos (0-48 ms); el real llega a 48-60 ms (medido por Camilo) -> se sube a 0-3 (0-72 ms).
+  3) IMU perfecta (solo ruido blanco); la real tiene sesgo de giroscopio y montaje con pequeno giro.
+  4) cambio_accion = -0.01: acciones poco suaves para servos reales.
+  Postura base: home (cadera -22.9, rodilla 45.8, tobillo -22.9 grados) difiere de la de pie de B-Human (estimada -20.8 /
+  48.2 / -27.5): no se cambia en entrenamiento; en el robot hay que llevar el cuerpo del stand de B-Human a 'home' con
+  una rampa antes de activar la politica (pendiente, lado C++).
+Que se hizo (archivos: rl/nao_carrera.py, rl/entrenar.py; sin ejecutar nada todavia):
+  - Config nueva 'obs_velocidades' (True por defecto: las generaciones viejas no cambian). Con False el actor no ve
+    vel_*; el critico las sigue viendo (privileged_state). Observacion del actor: 55 -> 40 por paso (x3 de historia = 120).
+  - Config nueva 'imu' (activa=False por defecto): sesgo de giroscopio uniforme +-0.052 rad/s por eje y giro de
+    montaje +-3 grados alrededor de X e Y aplicado al vector 'arriba' que ve el actor; se sortean en cada reset con
+    fold_in de una llave existente, asi que las secuencias de las generaciones anteriores no se mueven.
+  - GENERACIONES['nao_v08'] = v07c + obs_velocidades=False + latencia_max=3 + imu.activa + cambio_accion -0.03.
+    Se entrena con: --desde nao_v07c (el trasplante de pesos por nombre descarta las filas de vel_* de la primera capa).
+Hipotesis: v08 mantiene ~11 s en 5 m y el desvio de v07c (2.5-3.2 cm sin empujon fuerte) con una observacion que el
+  robot real si puede dar y sin ser fragil a retraso de 72 ms e IMU con sesgo. Riesgo: sin velocidades puede perder
+  algo de estabilidad al principio; la historia de 3 angulos deberia compensarlo.
+Cambia varias cosas a la vez (a diferencia de la regla de una cosa por generacion) por el plazo (carrera 3-nov-2026).
+  Si v08 empeora, se hace ablacion: v08a (solo sin velocidades), v08b (solo retraso+IMU).
+Comprobacion hecha: ambos archivos compilan (py_compile). Falta correr --prueba y entrenar.
+Siguiente: (1) copiar los archivos al Ubuntu y correr 'entrenar.py nao_v08 --prueba'; (2) entrenar ~100 M pasos
+  --desde nao_v07c (v07c con 60 M tardo ~55 min); (3) evaluar.py contra v07c (tiempo, desvio, caidas, retraso 3);
+  (4) exportar a ONNX con la normalizacion dentro y probar con onnxruntime 1.10.0 contra politica_np.npz;
+  (5) actualizar demo/rl_vivo.py y demo/caidas.py a la observacion nueva (sin vel_*) antes de usarlos con v08.
+
+=== [62] 2026-10-29 12:40 · nao_v08 entrenando; exportadores .cfg/ONNX y contrato de despliegue ===
+Objetivo: avanzar en paralelo el lado del robot mientras entrena nao_v08 (entrada [61]).
+Entrenamiento (lanzado 12:02 con nohup, PID 2783): runs/nao_v08_s0_20261029_120213, 100 M pasos, --desde nao_v07c.
+  La prueba corta (--prueba, runs/nao_v08_s0_20261029_114929) paso: trasplante 171 -> 126 entradas del actor (3 pasos x
+  42; la observacion por paso es 42 y no 40, porque incluye psi y d de la vision), 221 -> 176 del critico.
+  Progreso (progreso.csv): paso 0: recompensa 57.9, duracion 638 (v07c ~94-101 y ~963: quitar las velocidades de
+  articulacion y subir el retraso cuesta al principio); paso 11.1 M (15 min): 83.1, duracion 874 -> se recupera.
+  Ritmo ~1 M pasos/min -> 100 M en ~105 min.
+  Nota: el log redirigido (nao_v08_log.txt) no avanza porque Python guarda la salida en bufer; seguir con progreso.csv.
+Que se hizo:
+  - Se descubrio que entrenar.py llego a Windows con 18289 bytes (version vieja) tras el primer envio: la escritura no
+    se aplico. Se reenvio y se comprobo el tamano (19974). Leccion: verificar tamano tras cada escritura.
+  - rl/a_onnx.py: politica_np.npz -> politica.onnx (opset 13, normalizacion dentro del grafo, entrada [1,n_obs]).
+    Prueba con v07c: diferencia 5.1e-7 contra numpy (onnxruntime 1.31). NO probado con onnxruntime 1.10.0 (el del robot).
+  - rl/a_cfg.py: politica_np.npz -> <gen>.cfg en el formato de CopaRLWalkEngine de Camilo (pesos por filas, activacion
+    swish) + <gen>_golden.json con 64 observaciones crudas y su accion. Prueba con v07c: el .cfg releido reproduce la
+    accion con diferencia 7.6e-7. Decision: en el robot NO se usa ONNX Runtime; se evalua la red en C++ puro (como el modulo
+    de Camilo, que ya corrio en el NAO real): sin riesgo de version ni hilos de ORT en el hilo Motion.
+  - docs/despliegue_nao_v08.md: contrato completo para el modulo C++ (red, observacion de 42 por paso con su orden,
+    historia de 3 con ceros al inicio, decodificacion de la accion, postura home, seguridad, signos a verificar,
+    etapas E0-E6, riesgos). Postura home de la politica = poseHome de Camilo en los joints comunes (comprobado).
+Hallazgos:
+  - La observacion de v07c y anteriores pide velocidad de articulaciones, que el NAO no mide: solo v08 puede ir al robot.
+  - Signo de psi: la ley de CarrilBehavior (giro = -(kD d + kPsi psi), giro>0 = izquierda) implica que psi de
+    CarrilPercept es el rumbo del robot respecto al carril; la politica espera rumbo_deseado - rumbo_real. Probable
+    psi_politica = -psi_percept. A confirmar con prueba de mano en el robot.
+  - La fase usa f = 1.8 Hz fija (en el entrenamiento f fue al azar en [1.6, 2.0] por episodio).
+Siguiente: (1) al terminar v08, evaluar.py contra v07c; (2) exportar.py + a_cfg.py de v08 y probar el golden;
+  (3) subir a GitHub rl/a_cfg.py, rl/a_onnx.py, docs/despliegue_nao_v08.md y deploy/nao_v08/ para que la sesion Ubuntu del
+  repo Sabana implemente el modulo NaoRLWalkEngine a partir de CopaRLWalkEngine; (4) pruebas E0-E6.
+
+=== [63] 2026-10-29 14:50 · nao_v08 entrenada y evaluada: mismo tiempo y desvio que v07c, sin velocidades de articulacion ===
+Entrenamiento: runs/nao_v08_s0_20261029_120213, 100 M pasos en 83.3 min (--desde nao_v07c). Recompensa de evaluacion
+  94.6 (55 M) -> 93.6 (100 M), duracion de episodio 949 -> 928; v07c terminaba en ~101 y 963. Esa diferencia es el costo de
+  quitar la velocidad de articulaciones del actor, subir el retraso a 0-3 ciclos, sumar IMU con defectos y suavizar la accion.
+Evaluacion (evaluar.py, 16 carreras por condicion, mismo evaluador para las dos; salida en runs/eval_v08_vs_v07c.txt):
+  condicion      v08 metas / t meta / desvio cm     v07c metas / t meta / desvio cm
+  nominal        16/16  11.2 s  2.3                 16/16  10.9 s  2.4
+  friccion 0.5   16/16  11.0 s  2.5                 16/16  10.7 s  2.5
+  friccion 0.2   16/16  11.3 s  3.1                 16/16  10.6 s  3.0
+  friccion 1.5   16/16  11.4 s  2.4                 16/16  11.0 s  2.7
+  kp 70 %        16/16  11.3 s  2.3                 16/16  11.1 s  2.6
+  motor 70 %     16/16  11.2 s  2.3                 16/16  10.9 s  2.4
+  motor 40 %     16/16  11.1 s  2.4                 16/16  10.9 s  2.7
+  retraso 1      16/16  11.3 s  2.2                 16/16  11.1 s  2.2
+  retraso 3      16/16  11.9 s  2.4                 16/16  12.1 s  3.0
+  empujon 0.25   16/16  11.2 s  4.1                 16/16  10.9 s  4.4
+  empujon 0.45    6/16  11.4 s 14.1 (10 caidas)      12/16  11.4 s 10.9 (4 caidas)
+Lectura:
+  - Hipotesis confirmada en lo principal: v08 mantiene 16/16 en 10 de 11 condiciones, el desvio lateral (2.2-4.1 cm) y
+    ~11 s, con una observacion que el NAO si mide. Costo: ~0.3 s mas lento en nominal (11.2 frente a 10.9 s).
+  - retraso 3 (72 ms): ahora es condicion vista y v08 es mas rapida y recta que v07c (11.9 s y 2.4 cm frente a 12.1 s y 3.0).
+  - Empujon 0.45 m/s (mas fuerte que el 0.05-0.3 que se entreno): v08 cae 10 de 16 veces frente a 4 de 16 de v07c. Sin
+    velocidades pierde algo de recuperacion ante golpes fuertes. En la carrera no hay empujones; importa para choques.
+  - Limitacion: el evaluador usa la distribucion de entrenamiento del propio run; la evaluacion con sesgo de IMU solo vale
+    si evaluar.py construye el entorno desde config.json (lo hace: toma 'entorno' del run).
+  - Una sola semilla; no se sabe cuanto de la diferencia (0.3 s, empujones) es ruido del entrenamiento.
+Exportacion: rl/politicas/nao_v08_s0/politica_np.npz (diferencia numpy vs JAX 1.1e-6, OK). deploy/nao_v08/:
+  nao_v08.cfg (779 268 bytes, sha256 a1889c01...), nao_v08_golden.json (64 casos, 195 895 bytes), nao_v08.onnx
+  (215 704 bytes, diferencia 5.4e-7 contra numpy con onnxruntime 1.31; falta probar con 1.10.0).
+Problemas y solucion: dos veces (entrenar.py y bitacora.txt) la escritura a Windows devolvio 'written' pero dejo el
+  contenido viejo, porque el archivo se acababa de modificar; se detecto por el tamano y se reenvio. Regla: comprobar el
+  tamano despues de cada escritura.
+Siguiente: (1) subir a GitHub deploy/nao_v08, rl/a_cfg.py, rl/a_onnx.py, docs/despliegue_nao_v08.md; (2) la sesion Ubuntu
+  implementa NaoRLWalkEngine en SabanaHerons2026 a partir de CopaRLWalkEngine; (3) pruebas E0-E6 con el robot suspendido
+  primero; (4) opcional con GPU libre: v08 con empujones hasta 0.5 m/s o una segunda semilla.

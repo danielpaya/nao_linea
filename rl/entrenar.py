@@ -103,6 +103,54 @@ GENERACIONES = {
                                  vx=[0.0, 0.5], **{"empujones.activos": True, "vision.activa": True,
                                                    "recompensa.escalas.seguir_carril": 1.0}),
                     aleatorizar=dict(MUNDO)),
+    # --- noche 5 (2026-10-14): base nao_v06 s0. validar_vision.py mostro que sin camara la marcha deriva y se sale
+    # (v06 ya no ve el rumbo del giroscopio) y un sesgo de ~4-5 cm a la derecha (bitacora [44]) ---
+    "nao_v07a": dict(hipotesis="v06 + apagones de camara (0.5-2 s, ~1 cada 8 s; la observacion se queda con el ultimo "
+                               "cuadro) y la edad del ultimo cuadro en la observacion: aprende a no fiarse de un cuadro "
+                               "viejo. Sin rumbo del giroscopio, se espera que mejore poco en apagones largos.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.5], **{"empujones.activos": True, "vision.activa": True,
+                                                    "recompensa.escalas.seguir_carril": 1.0,
+                                                    "vision.apagones": True}),
+                     aleatorizar=dict(MUNDO)),
+    "nao_v07b": dict(hipotesis="v07a + el error de rumbo del giroscopio (con deriva) junto a la camara: durante un "
+                               "apagon mantiene el rumbo con el giroscopio y no se sale del carril.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.5], **{"empujones.activos": True, "vision.activa": True,
+                                                    "recompensa.escalas.seguir_carril": 1.0,
+                                                    "vision.apagones": True, "vision.giroscopio": True}),
+                     aleatorizar=dict(MUNDO)),
+    "nao_v07c": dict(hipotesis="v06 + seguir_carril mas estrecho (sigma 0.0025 m^2, ~5 cm en vez de ~10 cm): quita el "
+                               "sesgo de ~4-5 cm a la derecha sin perder los ~11 s.",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.5], **{"empujones.activos": True, "vision.activa": True,
+                                                    "recompensa.escalas.seguir_carril": 1.0,
+                                                    "recompensa.sigma_carril": 0.0025}),
+                     aleatorizar=dict(MUNDO)),
+    # --- despliegue en el NAO real (2026-10-29): base nao_v07c s0 (--desde nao_v07c). Cierra la brecha simulacion-robot
+    # que se encontro al revisar el NAO por dentro (docs de despliegue): no hay velocidad de articulaciones, el retraso
+    # real es ~36-60 ms, la IMU tiene sesgo y el servo recibe objetivos de posicion. Cambios juntos por falta de tiempo
+    # (no se separa el efecto de cada uno; si algo empeora, se corre una ablacion). ---
+    "nao_v08": dict(hipotesis="v07c sin velocidades de articulacion en la observacion del actor (el NAO real no las "
+                              "mide; la historia de 3 angulos le deja inferirlas), retraso de 0-3 ciclos (0-72 ms), IMU "
+                              "con sesgo de giroscopio (+-3 grados/s) y giro de montaje (+-3 grados) y castigo mayor al "
+                              "cambio de accion (-0.01 -> -0.03, mas suave para los motores): mantiene ~11 s y la "
+                              "centrada de v07c con una observacion que el robot si puede dar y sin ser fragil a "
+                              "retraso e IMU.",
+                    entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=3, codos=True, motores_reales=True,
+                                 vx=[0.0, 0.5], obs_velocidades=False,
+                                 **{"empujones.activos": True, "vision.activa": True,
+                                    "recompensa.escalas.seguir_carril": 1.0,
+                                    "recompensa.sigma_carril": 0.0025,
+                                    "recompensa.escalas.cambio_accion": -0.03,
+                                    "imu.activa": True}),
+                    aleatorizar=dict(MUNDO)),
+    "nao_v06d": dict(hipotesis="v05d (0.6 m/s) + vision simulada y seguir_carril, igual que v06 sobre v05c: ~9.5 s y "
+                               "centrada (plan B si el robot real aguanta 0.6 m/s).",
+                     entorno=dict(RUMBO, **CADERA, **PIES, latencia_max=2, codos=True, motores_reales=True,
+                                  vx=[0.0, 0.6], **{"empujones.activos": True, "vision.activa": True,
+                                                    "recompensa.escalas.seguir_carril": 1.0}),
+                     aleatorizar=dict(MUNDO)),
     "nao_v02": dict(hipotesis="+ friccion, masas y kp al azar: generaliza a pisos y motores distintos.",
                     entorno=dict(RUMBO, **CADERA), aleatorizar=dict(MUNDO)),
     "nao_v03": dict(hipotesis="+ motor debil y retraso de 0-2 ciclos: aguanta fallas que v02 no aguanta.",

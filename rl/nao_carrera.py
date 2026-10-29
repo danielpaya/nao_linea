@@ -89,6 +89,13 @@ def default_config() -> config_dict.ConfigDict:
             d0_max=0.10,               # m: salida corrida del centro
             psi0_max=0.14,             # rad (8 grados): salida chueca
             d_max=0.5,                 # m: recorte de lo que ve la politica
+            # --- desde nao_v07a: apagones de camara (pierde la linea varios cuadros seguidos) ---
+            apagones=False,            # activa los apagones y agrega vis_edad a la observacion
+            apagon_prob=0.003,         # probabilidad por paso de empezar un apagon (~1 cada 8 s)
+            apagon_dur=[0.5, 2.0],     # s que dura cada apagon (la observacion se queda con el ultimo cuadro)
+            edad_max=2.0,              # s: recorte de vis_edad (tiempo desde el ultimo cuadro nuevo)
+            # --- desde nao_v07b: ademas de la camara, el error de rumbo del giroscopio (con deriva) ---
+            giroscopio=False,
         ),
         frecuencia_paso=[1.6, 2.0],    # Hz del ciclo de marcha (izq + der)
         altura_paso=0.03,              # m que deberia subir el pie en el aire
@@ -96,6 +103,18 @@ def default_config() -> config_dict.ConfigDict:
         ruido=config_dict.create(
             nivel=1.0,
             gyro=0.2, gravedad=0.05, angulos=0.02, velocidades=1.0,
+        ),
+        # --- desde nao_v08: cerrar la brecha con el NAO real ---
+        # El NAO NO mide la velocidad de las articulaciones (solo angulos): con obs_velocidades=False el actor deja de
+        # verlas (el critico si, sin ruido). La historia de 3 angulos le deja inferir la velocidad si la necesita.
+        obs_velocidades=True,
+        # IMU real: el giroscopio tiene sesgo y la IMU esta montada con un pequeno giro respecto al torso. Se sortean
+        # por episodio (el robot no los conoce): sesgo del giroscopio +-sesgo_gyro rad/s en cada eje y giro de la
+        # IMU +-rot_deg grados alrededor de X e Y (afecta lo que el actor ve de 'arriba').
+        imu=config_dict.create(
+            activa=False,
+            sesgo_gyro=0.052,          # rad/s (~3 grados/s)
+            rot_deg=3.0,               # grados
         ),
         # --- robustez (cada generacion activa algo) ---
         latencia_max=0,                # retraso de la accion: 0..latencia_max ciclos de 24 ms (al azar por episodio)
@@ -199,9 +218,12 @@ class NaoCarrera(mjx_env.MjxEnv):
         rhyp = m.joint("RHipYawPitch")
         self._q_rhyp = int(rhyp.qposadr[0])
         self._q_lhyp = int(m.joint("LHipYawPitch").qposadr[0])
-        self._n_obs = 3 + 3 + n + n + n + 2 + 2                      # 49 por paso (55 con codos)
+        n_vel = n if self._config.obs_velocidades else 0           # desde nao_v08: sin velocidades de articulacion
+        self._n_obs = 3 + 3 + n + n_vel + n + 2 + 2                  # 49 por paso (55 con codos; 40 sin velocidades)
         if self._config.vision.activa:
             self._n_obs += 2                                           # + psi y d de la camara
+            self._n_obs += int(self._config.vision.apagones)           # + edad del ultimo cuadro
+            self._n_obs += int(self._config.vision.giroscopio)         # + error de rumbo del giroscopio
         elif self._config.rumbo.activo:
             self._n_obs += 1                                           # + error de rumbo
         self._i_cadera = np.array([MOTORES.index(c) for c in ("LHipYawPitch", "LHipRoll", "RHipRoll")])
@@ -241,6 +263,11 @@ class NaoCarrera(mjx_env.MjxEnv):
         e = jp.arctan2(jp.sin(info["rumbo_ref"] - est), jp.cos(info["rumbo_ref"] - est))
         return e
 
+    def _error_gyro(self, info):
+        """Rumbo deseado - rumbo estimado con el giroscopio (con deriva), aunque haya vision."""
+        e = info["rumbo_ref"] - info["rumbo_est"]
+        return jp.arctan2(jp.sin(e), jp.cos(e))
+
     def _yaw(self, data):
         R = data.xmat[self._torso]
         return jp.arctan2(R[1, 0], R[0, 0])
@@ -256,10 +283,15 @@ class NaoCarrera(mjx_env.MjxEnv):
     def etiquetas(self):
         """Nombre de cada entrada de la observacion (actor, critico). Sirve para trasplantar pesos entre versiones."""
         m = self._motores
+        vel = ["vel_" + n for n in m] if self._config.obs_velocidades else []
         blk = (["gyro%d" % i for i in range(3)] + ["arriba%d" % i for i in range(3)] + ["ang_" + n for n in m]
-               + ["vel_" + n for n in m] + ["acc_" + n for n in m] + ["cmd_vx", "cmd_wz", "fase_cos", "fase_sin"])
+               + vel + ["acc_" + n for n in m] + ["cmd_vx", "cmd_wz", "fase_cos", "fase_sin"])
         if self._config.vision.activa:
             blk += ["vis_psi", "vis_d"]
+            if self._config.vision.apagones:
+                blk += ["vis_edad"]
+            if self._config.vision.giroscopio:
+                blk += ["rumbo"]
         elif self._config.rumbo.activo:
             blk += ["rumbo"]
         estado = ["h%d_%s" % (h, e) for h in range(self._config.historia) for e in blk]
@@ -304,8 +336,16 @@ class NaoCarrera(mjx_env.MjxEnv):
         d0 = jax.random.uniform(k_d0, minval=-v.d0_max, maxval=v.d0_max) * v.activa
         psi0 = jax.random.uniform(k_psi0, minval=-v.psi0_max, maxval=v.psi0_max) * v.activa
         cfg_e = self._config.empujones
+        # IMU imperfecta (nao_v08): llaves derivadas con fold_in para no mover las de las generaciones anteriores
+        k_imu = jax.random.fold_in(k_deriva, 3)
+        k_sg, k_rot = jax.random.split(k_imu)
+        imu = self._config.imu
+        sesgo_gyro = jax.random.uniform(k_sg, (3,), minval=-imu.sesgo_gyro, maxval=imu.sesgo_gyro) * imu.activa
+        rot_imu = jax.random.uniform(k_rot, (2,), minval=-1.0, maxval=1.0) * jp.deg2rad(imu.rot_deg) * imu.activa
         info = {
             "rng": rng,
+            "sesgo_gyro": sesgo_gyro,                                   # rad/s, por eje, fijo en el episodio
+            "rot_imu": rot_imu,                                         # rad alrededor de X e Y, fijo en el episodio
             "comando": self._comando(k_cmd),
             "paso": 0,
             "fase": jp.array([0.0, jp.pi]),                            # pie izquierdo y derecho, desfasados media vuelta
@@ -321,6 +361,8 @@ class NaoCarrera(mjx_env.MjxEnv):
             "vis_cuenta": jp.zeros((), jp.int32),                       # pasos hasta el proximo cuadro
             "vis_muestra": jp.array([psi0, d0]),                        # ultimo cuadro tomado (se publica despues)
             "vis_obs": jp.array([psi0, d0]),                            # lo que ve la politica
+            "vis_apagon": jp.zeros((), jp.int32),                       # pasos que le quedan al apagon actual
+            "vis_edad": jp.zeros(()),                                   # s desde el ultimo cuadro nuevo publicado
             "rumbo_est": jp.zeros(()),                                  # rumbo estimado integrando el giroscopio
             "deriva": jax.random.uniform(k_deriva, minval=-self._config.rumbo.deriva_gyro,
                                          maxval=self._config.rumbo.deriva_gyro),
@@ -407,10 +449,18 @@ class NaoCarrera(mjx_env.MjxEnv):
         ref = info["yaw0"] + info["rumbo_ref"]
         normal = jp.array([-jp.sin(ref), jp.cos(ref)])
         info["carril_d"] = info["carril_d"] + jp.dot(data.qvel[0:2], normal) * self.dt
-        k_med, k_perd = jax.random.split(jax.random.fold_in(rng, 11))
+        k_med, k_perd, k_ap, k_dur = jax.random.split(jax.random.fold_in(rng, 11), 4)
         toca = info["vis_cuenta"] <= 0
         perdido = jax.random.bernoulli(k_perd, v.prob_perdida)
-        info["vis_obs"] = jp.where(toca & ~perdido, info["vis_muestra"], info["vis_obs"])
+        if v.apagones:                                 # apagon: varios cuadros seguidos sin linea
+            empieza = (info["vis_apagon"] <= 0) & jax.random.bernoulli(k_ap, v.apagon_prob)
+            dur = jax.random.randint(k_dur, (), int(round(v.apagon_dur[0] / self.dt)),
+                                     int(round(v.apagon_dur[1] / self.dt)) + 1)
+            info["vis_apagon"] = jp.where(empieza, dur, jp.maximum(info["vis_apagon"] - 1, 0))
+            perdido = perdido | (info["vis_apagon"] > 0)
+        publica = toca & ~perdido
+        info["vis_edad"] = jp.where(publica, 0.0, info["vis_edad"] + self.dt)
+        info["vis_obs"] = jp.where(publica, info["vis_muestra"], info["vis_obs"])
         info["vis_muestra"] = jp.where(toca, self._medir_carril(info, k_med), info["vis_muestra"])
         info["vis_cuenta"] = jp.where(toca, v.periodo - 1, info["vis_cuenta"] - 1)
         return info
@@ -453,19 +503,30 @@ class NaoCarrera(mjx_env.MjxEnv):
         ang = data.qpos[self._qadr] - self._postura
         vel = data.qvel[self._vadr]
         fase = jp.concatenate([jp.cos(info["fase"][:1]), jp.sin(info["fase"][:1])])
-        actual = jp.concatenate([
-            gyro + ruido(k[0], 3, c.gyro),            # 3  giroscopio
-            arriba + ruido(k[1], 3, c.gravedad),      # 3  inclinacion
-            ang + ruido(k[2], self.action_size, c.angulos),   # angulos de los motores
-            vel + ruido(k[3], self.action_size, c.velocidades),  # velocidades de los motores
+        # IMU con defectos (nao_v08): sesgo del giroscopio y pequeno giro de montaje (arriba' = arriba + rot x arriba)
+        rx, ry = info["rot_imu"][0], info["rot_imu"][1]
+        arriba_imu = arriba + jp.cross(jp.array([rx, ry, 0.0]), arriba)
+        partes = [
+            gyro + info["sesgo_gyro"] + ruido(k[0], 3, c.gyro),            # 3  giroscopio
+            arriba_imu + ruido(k[1], 3, c.gravedad),                       # 3  inclinacion
+            ang + ruido(k[2], self.action_size, c.angulos),                # angulos de los motores
+        ]
+        if self._config.obs_velocidades:              # el NAO real NO mide esto: en nao_v08 el actor ya no lo ve
+            partes.append(vel + ruido(k[3], self.action_size, c.velocidades))
+        partes += [
             info["accion_ant"],                       # accion anterior
             info["comando"],                          # 2  comando (vx, giro)
             fase,                                     # 2  reloj de marcha
-        ])
+        ]
+        actual = jp.concatenate(partes)
         if self._config.vision.activa:                # 2  psi y d de la camara (con ruido, 10 Hz, retraso)
             m, dm = self._config.rumbo.error_max, self._config.vision.d_max
             actual = jp.concatenate([actual, jp.array([jp.clip(info["vis_obs"][0], -m, m),
                                                         jp.clip(info["vis_obs"][1], -dm, dm)])])
+            if self._config.vision.apagones:          # 1  s desde el ultimo cuadro nuevo (el detector sabe si perdio la linea)
+                actual = jp.concatenate([actual, jp.clip(info["vis_edad"], 0.0, self._config.vision.edad_max)[None]])
+            if self._config.vision.giroscopio:        # 1  error de rumbo del giroscopio (AngleZ, con deriva)
+                actual = jp.concatenate([actual, jp.clip(self._error_gyro(info), -m, m)[None]])
         elif self._config.rumbo.activo:               # 1  error de rumbo (en la carrera: el psi de la vision)
             m = self._config.rumbo.error_max
             actual = jp.concatenate([actual, jp.clip(self._error_rumbo(info), -m, m)[None]])
